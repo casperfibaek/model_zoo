@@ -1,12 +1,22 @@
-# import numpy as np
-# from load_data import load_data
+from torch.utils.data import Dataset
 
-# labels, data_s2, _ = load_data(
-#     tile_size=64,
-#     overlaps=3,
-#     shuffle=True,
-#     data=["s2"],
-#     channel_last=False,
-# )
+class CustomTensorDataset(Dataset):
+    """TensorDataset with support of transforms.
+    """
+    def __init__(self, tensors, transform=None):
+        assert all(tensors[0].size(0) == tensor.size(0) for tensor in tensors)
+        self.tensors = tensors
+        self.transform = transform
 
-# import pdb; pdb.set_trace()
+    def __getitem__(self, index):
+        x = self.tensors[0][index]
+
+        if self.transform:
+            x = self.transform(x)
+
+        y = self.tensors[1][index]
+
+        return x, y
+
+    def __len__(self):
+        return self.tensors[0].size(0)
