@@ -6,11 +6,11 @@ from tqdm import tqdm
 import buteo as beo
 import numpy as np
 
-from load_data import load_data
+from load_data import load_data, MultiArray
 from model_CNN_Basic import CNN_BasicEncoder
 from utils import CustomTensorDataset
 
-y_train, x_train_s2, _x_train_s1 = load_data(tile_size=64, overlaps=3)
+data = load_data()
 
 # Normalise s2 data
 x_train_s2 = (x_train_s2 / 10000.0).astype(np.float32)
