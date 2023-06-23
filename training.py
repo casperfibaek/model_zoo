@@ -1,26 +1,62 @@
+# Standard Library
+import os
+from glob import glob
+
+# External Libraries
+import buteo as beo
+import numpy as np
+from tqdm import tqdm
+
+# PyTorch
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
-from tqdm import tqdm
 
-import buteo as beo
-import numpy as np
-
-from load_data import load_data, MultiArray
+# Internal
 from model_CNN_Basic import CNN_BasicEncoder
-from utils import CustomTensorDataset
 
-data = load_data()
+FOLDER = "./data/patches/"
 
-# Normalise s2 data
-x_train_s2 = (x_train_s2 / 10000.0).astype(np.float32)
+# Hyperparameters
+NUM_EPOCHS = 100
+PATIENCE = 100
+VAL_SPLIT = 0.1
+BATCH_SIZE = 16
+NUM_WORKERS = 0 # Increase if you are working on a large dataset. For small ones, multiple workers are slower.
 
-x_train, x_val, x_test, y_train, y_val, y_test = beo.split_train_val_test(x_train_s2, y_train, random_state=42)
+# Cosine annealing scheduler with warm restarts
+LEARNING_RATE = 0.001
+T_0 = 15  # Number of iterations for the first restart
+T_MULT = 2  # Multiply T_0 by this factor after each restart
+ETA_MIN = 0.000001  # Minimum learning rate of the scheduler
 
-# Convert labels to single values. We are only interested in the People per tile.
-y_train = y_train[:, 1:2, :, :].sum(axis=(2, 3))
-y_val = y_val[:, 1:2, :, :].sum(axis=(2, 3))
-y_test = y_test[:, 1:2, :, :].sum(axis=(2, 3))
+def callback_normalise(x, y):
+    """ Normalise the input data and sum the labels. """
+    x_norm = np.empty_like(x, dtype=np.float32)
+    np.divide(x, 10000.0, out=x_norm)
+
+    y_summed = np.sum(y, axis=(1, 2)) / y.size
+
+    return torch.from_numpy(x_norm), torch.from_numpy(y_summed)
+
+x_train = beo.MultiArray([np.load(f, mmap_mode="r") for f in glob(os.path.join(FOLDER, "*train_s2.npy"))], shuffle=True)
+y_train = beo.MultiArray([np.load(f, mmap_mode="r") for f in glob(os.path.join(FOLDER, "*train_label_area.npy"))])
+y_train.set_shuffle_index(x_train.get_shuffle_index())
+x_train, x_val = beo.split_multi_array(x_train, split_point=1-VAL_SPLIT)
+y_train, y_val = beo.split_multi_array(y_train, split_point=1-VAL_SPLIT)
+
+x_test = beo.MultiArray([np.load(f, mmap_mode="r") for f in glob(os.path.join(FOLDER, "*test_s2.npy"))])
+y_test = beo.MultiArray([np.load(f, mmap_mode="r") for f in glob(os.path.join(FOLDER, "*test_label_area.npy"))])
+
+assert len(x_train) == len(y_train) and len(x_test) == len(y_test) and len(x_val) == len(y_val), "Lengths of x and y do not match."
+
+ds_train = beo.Dataset(x_train, y_train, input_is_channel_last=True, output_is_channel_last=False, callback=callback_normalise)
+ds_test = beo.Dataset(x_test, y_test, input_is_channel_last=True, output_is_channel_last=False, callback=callback_normalise)
+ds_val = beo.Dataset(x_val, y_val, input_is_channel_last=True, output_is_channel_last=False, callback=callback_normalise)
+
+dl_train = DataLoader(ds_train, batch_size=BATCH_SIZE, shuffle=True, pin_memory=True, num_workers=NUM_WORKERS, drop_last=True, generator=torch.Generator(device='cuda'))
+dl_test = DataLoader(ds_test, batch_size=BATCH_SIZE, shuffle=False, pin_memory=True, num_workers=NUM_WORKERS, generator=torch.Generator(device='cuda'))
+dl_val = DataLoader(ds_val, batch_size=BATCH_SIZE, shuffle=False, pin_memory=True, num_workers=NUM_WORKERS, drop_last=True, generator=torch.Generator(device='cuda'))
 
 # Set device
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -31,89 +67,120 @@ if torch.cuda.is_available():
 else:
     print("No CUDA device available.")
 
-# Hyperparameters
-NUM_EPOCHS = 25
-LEARNING_RATE = 0.001
-BATCH_SIZE = 16
+if __name__ == "__main__":
+    print("Starting training...")
+    print("")
 
-model = CNN_BasicEncoder(output_dim=1)
-model.to(device)
-# model = torch.compile(model)
+    model = CNN_BasicEncoder(output_dim=1)
+    model.to(device)
 
-# Loss and optimizer
-criterion = nn.MSELoss()
-optimizer = torch.optim.AdamW(model.parameters(), lr=LEARNING_RATE)
+    # Loss and optimizer
+    criterion = nn.MSELoss()
+    optimizer = torch.optim.AdamW(model.parameters(), lr=LEARNING_RATE)
 
-# Datasets
-ds_train = CustomTensorDataset((torch.from_numpy(x_train).float(), torch.from_numpy(y_train).float()))
-ds_test = CustomTensorDataset((torch.from_numpy(x_test).float(), torch.from_numpy(y_test).float()))
-ds_val = CustomTensorDataset((torch.from_numpy(x_val).float(), torch.from_numpy(y_val).float()))
+    # Save the initial learning rate in optimizer's param_groups
+    for param_group in optimizer.param_groups:
+        param_group['initial_lr'] = LEARNING_RATE
 
-# Data loaders
-train_loader = DataLoader(dataset=ds_train, batch_size=BATCH_SIZE, shuffle=True, generator=torch.Generator(device='cuda'))
-test_loader = DataLoader(dataset=ds_test, batch_size=BATCH_SIZE, shuffle=False, generator=torch.Generator(device='cuda'))
-val_loader = DataLoader(dataset=ds_val, batch_size=BATCH_SIZE, shuffle=False, generator=torch.Generator(device='cuda'))
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+        optimizer,
+        T_0,
+        T_MULT,
+        ETA_MIN,
+        last_epoch=NUM_EPOCHS - 1,
+    )
 
-# Training loop
-for epoch in range(NUM_EPOCHS):
+    best_loss = None
+    best_model_state = None
+    epochs_no_improve = 0
 
-    # Initialize the running loss
-    train_loss = 0.0
+    # Training loop
+    for epoch in range(NUM_EPOCHS):
 
-    # Initialize the progress bar for training
-    train_pbar = tqdm(train_loader, total=len(train_loader), ncols=120)
+        # Initialize the running loss
+        train_loss = 0.0
 
-    for i, (images, labels) in enumerate(train_pbar):
-        # Move inputs and targets to the device (GPU)
-        images, labels = images.to(device), labels.to(device)
+        # Initialize the progress bar for training
+        train_pbar = tqdm(dl_train, total=len(dl_train), ncols=120, desc=f"Epoch {epoch+1}/{NUM_EPOCHS}")
 
-        # Zero the gradients
-        optimizer.zero_grad()
+        for i, (images, labels) in enumerate(train_pbar):
+            # Move inputs and targets to the device (GPU)
+            images, labels = images.to(device), labels.to(device)
 
-        # Forward pass
-        outputs = model(images)
-        loss = criterion(outputs, labels)
+            # Zero the gradients
+            optimizer.zero_grad()
 
-        # Backward pass and optimize
-        loss.backward()
-        optimizer.step()
+            # Forward pass
+            outputs = model(images)
+            loss = criterion(outputs, labels)
 
-        train_loss += loss.item()
+            # Backward pass and optimize
+            loss.backward()
+            optimizer.step()
 
-        train_pbar.set_postfix({
-            "loss": f"{loss.item():.4f}, mean_loss, {train_loss / (i + 1):.4f}",
-        })
+            # Update the scheduler
+            scheduler.step()
 
-    # Validate every epoch
+            train_loss += loss.item()
+
+            train_pbar.set_postfix({
+                "loss": f"{train_loss / (i + 1):.4f}",
+            })
+
+            # Validate at the end of each epoch
+            # This is done in the same scope to keep tqdm happy.
+            if i == len(dl_train) - 1:
+
+                # Validate every epoch
+                with torch.no_grad():
+
+                    val_loss = 0
+                    for i, (images, labels) in enumerate(dl_val):
+                        images = images.to(device)
+                        labels = labels.to(device)
+
+                        outputs = model(images)
+
+                        loss = criterion(outputs, labels)
+                        val_loss += loss.item()
+
+                # Append val_loss to the train_pbar
+                train_pbar.set_postfix({
+                    "loss": f"{train_loss / len(dl_train):.4f}",
+                    "val_loss": f"{val_loss / len(dl_val):.4f}",
+                }, refresh=True)
+
+                if best_loss is None:
+                    best_loss = val_loss
+                elif best_loss > val_loss:
+                    best_loss = val_loss
+                    best_model_state = model.state_dict().copy()
+
+                    epochs_no_improve = 0
+                else:
+                    epochs_no_improve += 1
+
+        # Early stopping
+        if epochs_no_improve == PATIENCE:
+            print(f'Early stopping triggered after {epoch + 1} epochs.')
+            break
+
+    # Load the best weights
+    model.load_state_dict(best_model_state)
+
+    print("Finished Training")
+    print("")
+
+    # Test the model
     with torch.no_grad():
-
-        val_loss = 0
-        for i, (images, labels) in enumerate(val_loader):
+        test_loss = 0
+        for i, (images, labels) in enumerate(dl_test):
             images = images.to(device)
             labels = labels.to(device)
 
             outputs = model(images)
 
             loss = criterion(outputs, labels)
-            val_loss += loss.item()
+            test_loss += loss.item()
 
-        train_pbar.set_postfix({
-            "loss": f"{loss.item():.4f}, mean_loss, {train_loss / (i + 1):.4f}, {val_loss / (i + 1):.4f}",
-        })
-
-print("Finished Training")
-print("")
-
-# Test the model
-with torch.no_grad():
-    test_loss = 0
-    for i, (images, labels) in enumerate(test_loader):
-        images = images.to(device)
-        labels = labels.to(device)
-
-        outputs = model(images)
-
-        loss = criterion(outputs, labels)
-        test_loss += loss.item()
-
-    print(f"Test Accuracy: {test_loss / (i + 1):.4f}")
+        print(f"Test Accuracy: {test_loss / (i + 1):.4f}")
