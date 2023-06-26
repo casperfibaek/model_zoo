@@ -20,9 +20,9 @@ class CNN_BasicEncoder(nn.Module):
     output : torch.Model
         The output model
     """
-    def __init__(self, output_dim=1):
+    def __init__(self, output_dim=1, input_dim=10):
         super(CNN_BasicEncoder, self).__init__()
-        self.conv1 = nn.LazyConv2d(32, 3, 1, 1)
+        self.conv1 = nn.Conv2d(input_dim, 32, 3, 1, 1)
         self.bn1 = nn.LazyBatchNorm2d(32)
         self.max_pool2d1 = nn.MaxPool2d(2)
         self.conv2 = nn.LazyConv2d(64, 3, 1, 1)
@@ -62,6 +62,7 @@ def train(
     num_epochs: int,
     learning_rate: float,
     batch_size: int,
+    name=str,
 ) -> str:
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -74,7 +75,7 @@ def train(
         encoder_only=True,
     )
 
-    model = CNN_BasicEncoder(output_dim=1)
+    model = CNN_BasicEncoder(output_dim=1, input_dim=10)
 
     wmape = torchmetrics.WeightedMeanAbsolutePercentageError(); wmape.__name__ = "wmape"
     mae = torchmetrics.MeanAbsoluteError(); mae.__name__ = "mae"
@@ -92,12 +93,24 @@ def train(
         train_loader=dl_train,
         val_loader=dl_val,
         test_loader=dl_test,
-        name="model_CNN_Basic",
+        name=name,
     )
 
 if __name__ == "__main__":
+    import warnings; warnings.filterwarnings("ignore", category=UserWarning)
+    from torchinfo import summary
+
+    LEARNING_RATE = 0.001
+    NUM_EPOCHS = 250
+    BATCH_SIZE = 16
+    NAME = "model_CNN_Basic"
+
+    print(f"Summary for: {NAME}")
+    summary(CNN_BasicEncoder(output_dim=1), input_size=(BATCH_SIZE, 10, 64, 64))
+    exit()
     train(
-        num_epochs=250,
-        learning_rate=0.001,
-        batch_size=16,
+        num_epochs=NUM_EPOCHS,
+        learning_rate=LEARNING_RATE,
+        batch_size=BATCH_SIZE,
+        name=NAME,
     )

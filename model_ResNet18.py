@@ -32,15 +32,17 @@ class BasicBlock(nn.Module):
 
 
 class BasicResNetEncoder(nn.Module):
-    def __init__(self, block, num_blocks, num_classes=1):
+    def __init__(self, block, num_blocks, output_dim=1, input_dim=10):
         super(BasicResNetEncoder, self).__init__()
         self.in_filters = 64
 
-        self.conv1 = nn.LazyConv2d(64, kernel_size=3, stride=1, padding=1, bias=False)
+        self.conv1 = nn.Conv2d(input_dim, 64, kernel_size=3, stride=1, padding=1, bias=False)
         self.bn1 = nn.LazyBatchNorm2d()
         self.layer1 = self._make_layer(block, 64, num_blocks[0], stride=1)
         self.layer2 = self._make_layer(block, 128, num_blocks[1], stride=2)
-        self.linear = nn.LazyLinear(num_classes)
+        self.fc1 = nn.LazyLinear(128)
+        self.dropout1 = nn.Dropout(0.25)
+        self.fc2 = nn.LazyLinear(output_dim)
 
     def _make_layer(self, block, planes, num_blocks, stride):
         strides = [stride] + [1]*(num_blocks-1)
@@ -58,7 +60,10 @@ class BasicResNetEncoder(nn.Module):
         out = self.layer2(out)
         out = F.avg_pool2d(out, 4)
         out = out.view(out.size(0), -1) # Same as flatten
-        out = self.linear(out)
+        out = self.fc1(out)
+        out = F.relu(out)
+        out = self.dropout1(out)
+        out = self.fc2(out)
         return out
 
 
@@ -79,7 +84,7 @@ def train(
         encoder_only=True,
     )
 
-    model = BasicResNetEncoder(BasicBlock, [2, 2], num_classes=1)
+    model = BasicResNetEncoder(BasicBlock, [2, 2], input_dim=10, output_dim=1)
 
     wmape = torchmetrics.WeightedMeanAbsolutePercentageError(); wmape.__name__ = "wmape"
     mae = torchmetrics.MeanAbsoluteError(); mae.__name__ = "mae"
@@ -101,8 +106,20 @@ def train(
     )
 
 if __name__ == "__main__":
+    import warnings; warnings.filterwarnings("ignore", category=UserWarning)
+    from torchinfo import summary
+
+    LEARNING_RATE = 0.001
+    NUM_EPOCHS = 250
+    BATCH_SIZE = 16
+    NAME = "model_ResNet18"
+
+    print(f"Summary for: {NAME}")
+    summary(BasicResNetEncoder(BasicBlock, [2, 2], input_dim=10, output_dim=1), input_size=(BATCH_SIZE, 10, 64, 64))
+    
     train(
-        num_epochs=250,
-        learning_rate=0.001,
-        batch_size=16,
+        num_epochs=NUM_EPOCHS,
+        learning_rate=LEARNING_RATE,
+        batch_size=BATCH_SIZE,
+        name=NAME,
     )
