@@ -1,6 +1,10 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torchmetrics
+
+from load_data import load_data
+from training import training_loop
 
 class CNN_BasicEncoder(nn.Module):
     """
@@ -52,3 +56,48 @@ class CNN_BasicEncoder(nn.Module):
         output = self.fc2(x)
 
         return output
+
+
+def train(
+    num_epochs: int,
+    learning_rate: float,
+    batch_size: int,
+) -> str:
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    dl_train, dl_val, dl_test = load_data(
+        x="s2",
+        y="area",
+        with_augmentations=True,
+        num_workers=0,
+        batch_size=batch_size,
+        encoder_only=True,
+    )
+
+    model = CNN_BasicEncoder(output_dim=1)
+
+    wmape = torchmetrics.WeightedMeanAbsolutePercentageError(); wmape.__name__ = "wmape"
+    mae = torchmetrics.MeanAbsoluteError(); mae.__name__ = "mae"
+
+    training_loop(
+        num_epochs=num_epochs,
+        learning_rate=learning_rate,
+        model=model,
+        criterion=nn.MSELoss(),
+        device=device,
+        metrics=[
+            wmape.to(device),
+            mae.to(device),
+        ],
+        train_loader=dl_train,
+        val_loader=dl_val,
+        test_loader=dl_test,
+        name="model_CNN_Basic",
+    )
+
+if __name__ == "__main__":
+    train(
+        num_epochs=250,
+        learning_rate=0.001,
+        batch_size=16,
+    )

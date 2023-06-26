@@ -1,14 +1,10 @@
-class WarmupScheduler:
-    def __init__(self, optimizer, warmup_steps, init_lr, peak_lr):
-        self.optimizer = optimizer
-        self.warmup_steps = warmup_steps
-        self.init_lr = init_lr
-        self.peak_lr = peak_lr
-        self.current_step = 0
+def patience_calculator(epoch, t_0, t_m, max_patience=50):
+    """ Calculate the patience for the scheduler. """
+    if epoch <= t_0:
+        return t_0
 
-    def step(self):
-        self.current_step += 1
-        if self.current_step <= self.warmup_steps:
-            lr = self.init_lr + (self.peak_lr - self.init_lr) * (self.current_step / self.warmup_steps)
-            for param_group in self.optimizer.param_groups:
-                param_group['lr'] = lr
+    p = [t_0 * t_m ** i for i in range(100) if t_0 * t_m ** i <= epoch][-1]
+    if p > max_patience:
+        return max_patience
+
+    return p

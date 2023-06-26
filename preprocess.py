@@ -13,6 +13,7 @@ PROCESS_S1 = True
 PROCESS_S2 = True
 OVERLAPS = 1
 PATCH_SIZE = 64
+VAL_SPLIT = 0.1
 
 # If empty, all locations are used.
 TRAIN_LOCATIONS = []
@@ -77,6 +78,9 @@ for img in images:
 
     # Mask any tiles with any masked values.
     mask_bool = ~np.any(initial_patches == 0, axis=(1, 2, 3))
+    mask_bool_sum = mask_bool.sum()
+    mask_random = np.random.permutation(np.arange(mask_bool_sum))
+    idx_val = int(mask_bool_sum * (1 - VAL_SPLIT))
 
     if PROCESS_S1:
         patches_s1 = beo.array_to_patches(
@@ -84,7 +88,14 @@ for img in images:
             tile_size=PATCH_SIZE,
             n_offsets=OVERLAPS,
             border_check=True,
-        )[mask_bool]
+        )[mask_bool][mask_random]
+
+        if TARGET == "train":
+            patches_s1_val = patches_s1[idx_val:]
+            patches_s1 = patches_s1[:idx_val]
+
+            np.save(os.path.join(FOLDER_OUT, f"{location}_val_s1.npy"), patches_s1_val)
+
         np.save(os.path.join(FOLDER_OUT, f"{location}_{TARGET}_s1.npy"), patches_s1)
 
     if PROCESS_S2:
@@ -93,7 +104,14 @@ for img in images:
             tile_size=PATCH_SIZE,
             n_offsets=OVERLAPS,
             border_check=True,
-        )[mask_bool]
+        )[mask_bool][mask_random]
+
+        if TARGET == "train":
+            patches_s2_val = patches_s2[idx_val:]
+            patches_s2 = patches_s2[:idx_val]
+
+            np.save(os.path.join(FOLDER_OUT, f"{location}_val_s2.npy"), patches_s2_val)
+
         np.save(os.path.join(FOLDER_OUT, f"{location}_{TARGET}_s2.npy"), patches_s2)
 
     patches_label_area = beo.array_to_patches(
@@ -101,7 +119,14 @@ for img in images:
         tile_size=PATCH_SIZE,
         n_offsets=OVERLAPS,
         border_check=True,
-    )[mask_bool]
+    )[mask_bool][mask_random]
+
+    if TARGET == "train":
+        patches_label_area_val = patches_label_area[idx_val:]
+        patches_label_area = patches_label_area[:idx_val]
+
+        np.save(os.path.join(FOLDER_OUT, f"{location}_val_label_area.npy"), patches_label_area_val)
+
     np.save(os.path.join(FOLDER_OUT, f"{location}_{TARGET}_label_area.npy"), patches_label_area)
 
     patches_label_volume = beo.array_to_patches(
@@ -109,7 +134,14 @@ for img in images:
         tile_size=PATCH_SIZE,
         n_offsets=OVERLAPS,
         border_check=True,
-    )[mask_bool]
+    )[mask_bool][mask_random]
+
+    if TARGET == "train":
+        patches_label_volume_val = patches_label_volume[idx_val:]
+        patches_label_volume = patches_label_volume[:idx_val]
+
+        np.save(os.path.join(FOLDER_OUT, f"{location}_val_label_volume.npy"), patches_label_volume_val)
+
     np.save(os.path.join(FOLDER_OUT, f"{location}_{TARGET}_label_volume.npy"), patches_label_volume)
 
     patches_label_people = beo.array_to_patches(
@@ -117,7 +149,14 @@ for img in images:
         tile_size=PATCH_SIZE,
         n_offsets=OVERLAPS,
         border_check=True,
-    )[mask_bool]
+    )[mask_bool][mask_random]
+
+    if TARGET == "train":
+        patches_label_people_val = patches_label_people[idx_val:]
+        patches_label_people = patches_label_people[:idx_val]
+
+        np.save(os.path.join(FOLDER_OUT, f"{location}_val_label_people.npy"), patches_label_people_val)
+
     np.save(os.path.join(FOLDER_OUT, f"{location}_{TARGET}_label_people.npy"), patches_label_people)
 
     patches_label_lc = beo.array_to_patches(
@@ -125,18 +164,30 @@ for img in images:
         tile_size=PATCH_SIZE,
         n_offsets=OVERLAPS,
         border_check=True,
-    )[mask_bool]
+    )[mask_bool][mask_random]
+
+    if TARGET == "train":
+        patches_label_lc_val = patches_label_lc[idx_val:]
+        patches_label_lc = patches_label_lc[:idx_val]
+
+        np.save(os.path.join(FOLDER_OUT, f"{location}_val_label_lc.npy"), patches_label_lc_val)
+
     np.save(os.path.join(FOLDER_OUT, f"{location}_{TARGET}_label_lc.npy"), patches_label_lc)
 
     assert patches_label_area.shape[0] == patches_label_volume.shape[0], "Number of patches do not match."
     assert patches_label_area.shape[0] == patches_label_people.shape[0], "Number of patches do not match."
     assert patches_label_area.shape[0] == patches_label_lc.shape[0], "Number of patches do not match."
+    assert patches_label_area_val.shape[0] == patches_label_volume_val.shape[0], "Number of patches do not match."
+    assert patches_label_area_val.shape[0] == patches_label_people_val.shape[0], "Number of patches do not match."
+    assert patches_label_area_val.shape[0] == patches_label_lc_val.shape[0], "Number of patches do not match."
 
     if PROCESS_S1:
         assert patches_label_area.shape[0] == patches_s1.shape[0], "Number of patches do not match."
+        assert patches_label_area_val.shape[0] == patches_s1_val.shape[0], "Number of patches do not match."
 
     if PROCESS_S2:
         assert patches_label_area.shape[0] == patches_s2.shape[0], "Number of patches do not match."
+        assert patches_label_area_val.shape[0] == patches_s2_val.shape[0], "Number of patches do not match."
 
     processed += 1
     print(f"Processed {location}. ({processed}/{total}).")

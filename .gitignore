@@ -164,3 +164,4 @@ data/images/*.xml
 data/images/*.zip
 data/patches/*.npy
 data/patches/*.npz
+trained_models/*.pt
