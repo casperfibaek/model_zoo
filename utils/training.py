@@ -114,7 +114,7 @@ def training_loop(
                     model.eval()
 
                     val_loss = 0
-                    for i, (images, labels) in enumerate(val_loader):
+                    for j, (images, labels) in enumerate(val_loader):
                         images = images.to(device)
                         labels = labels.to(device)
 
@@ -128,10 +128,10 @@ def training_loop(
 
                 # Append val_loss to the train_pbar
                 train_pbar.set_postfix({
-                    "loss": f"{train_loss / len(train_loader):.4f}",
+                    "loss": f"{train_loss / (i + 1):.4f}",
                     **{name: f"{value / (i + 1):.4f}" for name, value in train_metrics_values.items()},
-                    "val_loss": f"{val_loss / len(val_loader):.4f}",
-                    **{f"val_{name}": f"{value / (i + 1):.4f}" for name, value in val_metrics_values.items()},
+                    "loss": f"{val_loss / (j + 1):.4f}",
+                    **{f"val_{name}": f"{value / (j + 1):.4f}" for name, value in val_metrics_values.items()},
                 }, refresh=True)
 
                 if best_loss is None:
@@ -165,7 +165,7 @@ def training_loop(
     # Test the model
     with torch.no_grad():
         test_loss = 0
-        for i, (images, labels) in enumerate(test_loader):
+        for k, (images, labels) in enumerate(test_loader):
             images = images.to(device)
             labels = labels.to(device)
 
@@ -174,7 +174,7 @@ def training_loop(
             loss = criterion(outputs, labels)
             test_loss += loss.item()
 
-        print(f"Test Accuracy: {test_loss / (i + 1):.4f}")
+        print(f"Test Accuracy: {test_loss / (k + 1):.4f}")
 
     # Save the model
     torch.save(model.state_dict(), os.path.join(out_folder, f"{name}.pt"))
