@@ -3,8 +3,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchmetrics
 
-from load_data import load_data
-from training import training_loop
+import sys; sys.path.append("../")
+from utils import load_data, training_loop
 
 class CNN_BasicEncoder(nn.Module):
     """
@@ -20,7 +20,7 @@ class CNN_BasicEncoder(nn.Module):
     output : torch.Model
         The output model
     """
-    def __init__(self, output_dim=1, input_dim=10):
+    def __init__(self, *, output_dim=1, input_dim=10):
         super(CNN_BasicEncoder, self).__init__()
         self.conv1 = nn.Conv2d(input_dim, 32, 3, 1, 1)
         self.bn1 = nn.LazyBatchNorm2d(32)
@@ -107,7 +107,7 @@ if __name__ == "__main__":
 
     print(f"Summary for: {NAME}")
     summary(CNN_BasicEncoder(output_dim=1), input_size=(BATCH_SIZE, 10, 64, 64))
-    exit()
+
     train(
         num_epochs=NUM_EPOCHS,
         learning_rate=LEARNING_RATE,

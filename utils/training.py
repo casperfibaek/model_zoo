@@ -8,7 +8,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from torch.cuda.amp import GradScaler, autocast
 
-from utils import patience_calculator
+from .training_utils import patience_calculator
 
 
 def training_loop(
@@ -22,11 +22,12 @@ def training_loop(
     test_loader: DataLoader,
     metrics: list = None,
     name="model",
-    out_folder="./trained_models/",
+    out_folder="../trained_models/",
     t_0=20,
     t_mult=2,
     max_patience=50,
     eta_min=0.000001,
+    predict_func=None,
 ) -> None:
         
     torch.set_default_device(device)
@@ -135,10 +136,14 @@ def training_loop(
 
                 if best_loss is None:
                     best_loss = val_loss
+                    if predict_func is not None:
+                        predict_func(best_model_state, epoch)
                 elif best_loss > val_loss:
                     best_loss = val_loss
                     best_model_state = model.state_dict().copy()
                     best_epoch = epoch
+                    if predict_func is not None:
+                        predict_func(best_model_state, epoch)
 
                     epochs_no_improve = 0
                 else:

@@ -3,13 +3,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchmetrics
 
-from load_data import load_data
-from training import training_loop
+import sys; sys.path.append("../")
+from utils import load_data, training_loop
 
 class BasicBlock(nn.Module):
     expansion = 1
 
-    def __init__(self, in_filters, filters, stride=1):
+    def __init__(self, *, in_filters, filters, stride=1):
         super(BasicBlock, self).__init__()
         self.conv1 = nn.LazyConv2d(filters, kernel_size=3, stride=stride, padding=1, bias=False)
         self.bn1 = nn.LazyBatchNorm2d()
@@ -72,6 +72,7 @@ def train(
     num_epochs: int,
     learning_rate: float,
     batch_size: int,
+    name=str,
 ) -> str:
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -102,7 +103,7 @@ def train(
         train_loader=dl_train,
         val_loader=dl_val,
         test_loader=dl_test,
-        name="model_CNN_Basic",
+        name=name,
     )
 
 if __name__ == "__main__":
