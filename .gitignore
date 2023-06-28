@@ -167,3 +167,4 @@ data/patches/*.npz
 trained_models/*.pt
 visualisations/*.tif
 visualisations/*.xml
+visualisations/*.mp4

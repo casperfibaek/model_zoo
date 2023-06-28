@@ -6,14 +6,13 @@ import sys; sys.path.append("../")
 from utils import (
     load_data,
     training_loop,
-    LowerMSE,
     TiledMSE,
 )
 
 
 
 class ResidualBlock(nn.Module):
-    def __init__(self, in_channels, out_channels):
+    def __init__(self, in_channels, out_channels, downsample=False):
         super(ResidualBlock, self).__init__()
 
         self.conv1 = nn.LazyConv2d(out_channels, 3, padding=1)
@@ -73,7 +72,7 @@ class UNet(nn.Module):
         self.down_conv1 = ResidualBlock(2 ** (size_pow2 + 0), 2 ** (size_pow2 + 0))
         self.down_conv2 = ResidualBlock(2 ** (size_pow2 + 0), 2 ** (size_pow2 + 1))
         self.down_conv3 = ResidualBlock(2 ** (size_pow2 + 1), 2 ** (size_pow2 + 2))
-        self.down_conv4 = ResidualBlock(2 ** (size_pow2 + 2), 2 ** (size_pow2 + 3))
+        self.bottle_conv1 = ResidualBlock(2 ** (size_pow2 + 2), 2 ** (size_pow2 + 3))
         
         self.max_pool = nn.MaxPool2d(2)
         
@@ -94,15 +93,15 @@ class UNet(nn.Module):
 
         # Downsampling
         conv1 = self.down_conv1(conv0)
-        x = self.max_pool(conv1)
+        # x = self.max_pool(conv1)
 
-        conv2 = self.down_conv2(x)
-        x = self.max_pool(conv2)
+        conv2 = self.down_conv2(conv1)
+        # x = self.max_pool(conv2)
 
-        conv3 = self.down_conv3(x)
-        x = self.max_pool(conv3)
+        conv3 = self.down_conv3(conv2)
+        # x = self.max_pool(conv3)
         
-        x = self.down_conv4(x)
+        x = self.bottle_conv1(conv3)
         
         # Upsamping
         x = self.up_trans1(x)
@@ -152,9 +151,7 @@ def train(
         num_epochs=num_epochs,
         learning_rate=learning_rate,
         model=model,
-        criterion=nn.MSELoss(),
-        # criterion=TiledMSE(bias=0.2),
-        # criterion=LowerMSE(),
+        criterion=TiledMSE(bias=0.5),
         device=device,
         metrics=[
             mse.to(device),
@@ -175,8 +172,8 @@ if __name__ == "__main__":
     import numpy as np
 
     LEARNING_RATE = 0.001
-    NUM_EPOCHS = 100
-    BATCH_SIZE = 32
+    NUM_EPOCHS = 250
+    BATCH_SIZE = 16
     NAME = "model_ResNetUnet"
 
     def predict_func(model, epoch):
@@ -221,5 +218,3 @@ if __name__ == "__main__":
         name=NAME,
         predict_func=predict_func,
     )
-
-# val_mse=35.1470, val_wmape=0.8457, val_mae=1.1483
