@@ -1,10 +1,15 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import torchmetrics
 
 import sys; sys.path.append("../")
-from utils import load_data, training_loop
+from utils import (
+    load_data,
+    training_loop,
+    LowerMSE,
+    TiledMSE,
+)
+
 
 
 class ResidualBlock(nn.Module):
@@ -45,6 +50,9 @@ class UNet(nn.Module):
 
     Parameters
     ----------
+    input_dim : int, optional
+        The input dimension, default: 10
+
     output_dim : int, optional
         The output dimension, default: 1
 
@@ -59,8 +67,10 @@ class UNet(nn.Module):
     """
     def __init__(self, *, input_dim=10, output_dim=1, size_pow2=5):
         super(UNet, self).__init__()
+
+        self.input_conv = nn.Conv2d(input_dim, 2 ** (size_pow2 + 0), kernel_size=7, padding=3)
         
-        self.down_conv1 = ResidualBlock(input_dim, 2 ** (size_pow2 + 0))
+        self.down_conv1 = ResidualBlock(2 ** (size_pow2 + 0), 2 ** (size_pow2 + 0))
         self.down_conv2 = ResidualBlock(2 ** (size_pow2 + 0), 2 ** (size_pow2 + 1))
         self.down_conv3 = ResidualBlock(2 ** (size_pow2 + 1), 2 ** (size_pow2 + 2))
         self.down_conv4 = ResidualBlock(2 ** (size_pow2 + 2), 2 ** (size_pow2 + 3))
@@ -79,8 +89,11 @@ class UNet(nn.Module):
         self.out = nn.LazyConv2d(output_dim, kernel_size=1)
 
     def forward(self, x):
-        # downsampling part
-        conv1 = self.down_conv1(x)
+        # Large input convolution for context
+        conv0 = self.input_conv(x)
+
+        # Downsampling
+        conv1 = self.down_conv1(conv0)
         x = self.max_pool(conv1)
 
         conv2 = self.down_conv2(x)
@@ -91,7 +104,7 @@ class UNet(nn.Module):
         
         x = self.down_conv4(x)
         
-        # upsampling part
+        # Upsamping
         x = self.up_trans1(x)
         x = torch.cat([x, conv3], dim=1)
         
@@ -106,7 +119,8 @@ class UNet(nn.Module):
         x = self.up_conv3(x)
         
         # output layer
-        out = self.out(x)
+        out = torch.clamp(self.out(x), 0.0, 100.0)
+
         return out
 
 
@@ -134,27 +148,13 @@ def train(
     mae = torchmetrics.MeanAbsoluteError(); mae.__name__ = "mae"
     mse = torchmetrics.MeanSquaredError(); mse.__name__ = "mse"
 
-    class TiledMSE(nn.Module):
-        def __init__(self, bias=0.2):
-            super(TiledMSE, self).__init__()
-            self.bias = bias
-
-        def forward(self, y_pred, y_true):
-            y_pred_sum = torch.sum(y_pred, dim=(1, 2, 3)) / (y_pred.shape[1] * y_pred.shape[2] * y_pred.shape[3])
-            y_true_sum = torch.sum(y_true, dim=(1, 2, 3)) / (y_true.shape[1] * y_true.shape[2] * y_true.shape[3])
-
-            sum_mse = ((y_pred_sum - y_true_sum) ** 2).mean()
-            mse = ((y_pred - y_true) ** 2).mean()
-
-            weighted = (sum_mse * (1 - self.bias)) + (mse * self.bias)
-            
-            return weighted 
-
     training_loop(
         num_epochs=num_epochs,
         learning_rate=learning_rate,
         model=model,
-        criterion=TiledMSE(bias=0.2),
+        criterion=nn.MSELoss(),
+        # criterion=TiledMSE(bias=0.2),
+        # criterion=LowerMSE(),
         device=device,
         metrics=[
             mse.to(device),
@@ -175,13 +175,11 @@ if __name__ == "__main__":
     import numpy as np
 
     LEARNING_RATE = 0.001
-    NUM_EPOCHS = 250
-    BATCH_SIZE = 16
-    NAME = "model_UNet_Basic"
+    NUM_EPOCHS = 100
+    BATCH_SIZE = 32
+    NAME = "model_ResNetUnet"
 
-    def predict_func(model_state, epoch):
-        model = UNet(output_dim=1, size_pow2=5)
-        model.load_state_dict(model_state)
+    def predict_func(model, epoch):
         model.eval()
         model.to("cuda")
         
@@ -205,11 +203,12 @@ if __name__ == "__main__":
                 callback=predict,
                 tile_size=64,
                 n_offsets=3,
+                batch_size=BATCH_SIZE,
             )
         beo.array_to_raster(
             predicted,
             reference=img_path,
-            out_path=F"../visualisations/naestved_s2_predicted_{epoch}.tif",
+            out_path=F"../visualisations/pred_MSE_{epoch}.tif",
         )
 
     print(f"Summary for: {NAME}")
@@ -222,3 +221,5 @@ if __name__ == "__main__":
         name=NAME,
         predict_func=predict_func,
     )
+
+# val_mse=35.1470, val_wmape=0.8457, val_mae=1.1483

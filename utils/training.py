@@ -63,10 +63,10 @@ def training_loop(
     best_model_state = model.state_dict().copy()
     epochs_no_improve = 0
 
-    model.train()
 
     # Training loop
     for epoch in range(num_epochs):
+        model.train()
 
         # Initialize the running loss
         train_loss = 0.0
@@ -130,20 +130,25 @@ def training_loop(
                 train_pbar.set_postfix({
                     "loss": f"{train_loss / (i + 1):.4f}",
                     **{name: f"{value / (i + 1):.4f}" for name, value in train_metrics_values.items()},
-                    "loss": f"{val_loss / (j + 1):.4f}",
+                    "val_loss": f"{val_loss / (j + 1):.4f}",
                     **{f"val_{name}": f"{value / (j + 1):.4f}" for name, value in val_metrics_values.items()},
                 }, refresh=True)
 
                 if best_loss is None:
-                    best_loss = val_loss
-                    if predict_func is not None:
-                        predict_func(best_model_state, epoch)
-                elif best_loss > val_loss:
+                    best_epoch = epoch
                     best_loss = val_loss
                     best_model_state = model.state_dict().copy()
-                    best_epoch = epoch
+
                     if predict_func is not None:
-                        predict_func(best_model_state, epoch)
+                        predict_func(model, epoch + 1)
+
+                elif best_loss > val_loss:
+                    best_epoch = epoch
+                    best_loss = val_loss
+                    best_model_state = model.state_dict().copy()
+
+                    if predict_func is not None:
+                        predict_func(model, epoch + 1)
 
                     epochs_no_improve = 0
                 else:
@@ -177,4 +182,4 @@ def training_loop(
         print(f"Test Accuracy: {test_loss / (k + 1):.4f}")
 
     # Save the model
-    torch.save(model.state_dict(), os.path.join(out_folder, f"{name}.pt"))
+    torch.save(best_model_state, os.path.join(out_folder, f"{name}.pt"))
