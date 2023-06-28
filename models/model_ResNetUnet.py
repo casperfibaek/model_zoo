@@ -16,7 +16,7 @@ class ResidualBlock(nn.Module):
     def __init__(self, in_channels, out_channels):
         super(ResidualBlock, self).__init__()
 
-        self.conv1 = nn.LazyConv2d(out_channels, 3, padding=1)
+        self.conv1 = nn.LazyConv2d(out_channels, 1, padding=1)
         self.bn1 = nn.LazyBatchNorm2d()
         self.relu = nn.ReLU()
 
@@ -209,7 +209,7 @@ if __name__ == "__main__":
         )
 
     print(f"Summary for: {NAME}")
-    # summary(UNet(output_dim=1), input_size=(BATCH_SIZE, 10, 64, 64))
+    summary(UNet(output_dim=1), input_size=(BATCH_SIZE, 10, 64, 64))
 
     train(
         num_epochs=NUM_EPOCHS,
