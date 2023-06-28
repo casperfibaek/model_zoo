@@ -11,8 +11,9 @@ from utils import (
 
 
 
+
 class ResidualBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, downsample=False):
+    def __init__(self, in_channels, out_channels):
         super(ResidualBlock, self).__init__()
 
         self.conv1 = nn.LazyConv2d(out_channels, 3, padding=1)
@@ -72,7 +73,7 @@ class UNet(nn.Module):
         self.down_conv1 = ResidualBlock(2 ** (size_pow2 + 0), 2 ** (size_pow2 + 0))
         self.down_conv2 = ResidualBlock(2 ** (size_pow2 + 0), 2 ** (size_pow2 + 1))
         self.down_conv3 = ResidualBlock(2 ** (size_pow2 + 1), 2 ** (size_pow2 + 2))
-        self.bottle_conv1 = ResidualBlock(2 ** (size_pow2 + 2), 2 ** (size_pow2 + 3))
+        self.down_conv4 = ResidualBlock(2 ** (size_pow2 + 2), 2 ** (size_pow2 + 3))
         
         self.max_pool = nn.MaxPool2d(2)
         
@@ -93,15 +94,15 @@ class UNet(nn.Module):
 
         # Downsampling
         conv1 = self.down_conv1(conv0)
-        # x = self.max_pool(conv1)
+        x = self.max_pool(conv1)
 
-        conv2 = self.down_conv2(conv1)
-        # x = self.max_pool(conv2)
+        conv2 = self.down_conv2(x)
+        x = self.max_pool(conv2)
 
-        conv3 = self.down_conv3(conv2)
-        # x = self.max_pool(conv3)
+        conv3 = self.down_conv3(x)
+        x = self.max_pool(conv3)
         
-        x = self.bottle_conv1(conv3)
+        x = self.down_conv4(x)
         
         # Upsamping
         x = self.up_trans1(x)
@@ -121,7 +122,6 @@ class UNet(nn.Module):
         out = torch.clamp(self.out(x), 0.0, 100.0)
 
         return out
-
 
 def train(
     num_epochs: int,
@@ -209,7 +209,7 @@ if __name__ == "__main__":
         )
 
     print(f"Summary for: {NAME}")
-    summary(UNet(output_dim=1), input_size=(BATCH_SIZE, 10, 64, 64))
+    # summary(UNet(output_dim=1), input_size=(BATCH_SIZE, 10, 64, 64))
 
     train(
         num_epochs=NUM_EPOCHS,
