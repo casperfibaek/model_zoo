@@ -23,7 +23,7 @@ SQR_1 = "#FFC300"
 SQR_2 = "#C70039"
 LOC = 2
 FOLDER = "../visualisations/"
-IMG_GLOB = f"{FOLDER}pred_MSE_*.tif"
+IMG_GLOB = f"{FOLDER}pred_MSELarge_*.tif"
 VMIN = 0.0
 VMAX = 100.0 
 THRESHOLD = 1.0 # Minumum value to be considered a prediction (0.01 for [0, 1] and 1.0 for [0, 100])
@@ -36,7 +36,7 @@ places = [
         "blue": [1000, 1650], # red
         "red": [700, 350],
         "rgb": "../data/images/naestved_s2.tif",
-        "out_path": "C:/Users/casper.fibaek/OneDrive - ESA/Desktop/projects/model_zoo/visualisations/pred_MSE_naestved_v2.mp4",
+        "out_path": "C:/Users/casper.fibaek/OneDrive - ESA/Desktop/projects/model_zoo/visualisations/pred_MSELarge_naestved.mp4",
     },
 ]
 
@@ -186,8 +186,6 @@ for idx, place in enumerate(places):
     def updatefig(j):
         global ax_main, ax_sup1, ax_sup2, rgb_image, predictions, red_rgb, blue_rgb, sup1_rect, sup1_rect, red_pred, blue_pred, time_text, place_text, THRESHOLD
 
-        # nr_preds = predictions.shape[0]
-
         if j < warm_up:
             main_rgb.set_data(rgb_image)
             red_rgb.set_data(red_square_rgb)
@@ -196,28 +194,21 @@ for idx, place in enumerate(places):
             return [main_rgb, main_pred, red_rgb, red_pred, blue_rgb, blue_pred]
         
         idx = j - warm_up
-        # prop = 1 - (idx / nr_preds)
-
         pred = predictions[idx, :, :]
+
         main_rgb.set_data(np.clip(rgb_image, 0.0, 1.0))
-        # main_rgb.set_data(np.clip(rgb_image * prop, 0.0, 1.0))
         main_pred.set_data(pred)
-        # main_pred.set_alpha(np.clip(pred + (idx / nr_preds * 1.333), 0.0, 1.0))
-        main_pred.set_alpha((pred > THRESHOLD).astype(np.float32))
+        main_pred.set_alpha(np.where(pred > THRESHOLD, 1.0, pred / THRESHOLD).astype(np.float32))
 
         red_rgb.set_data(np.clip(red_square_rgb, 0.0, 1.0))
-        # red_rgb.set_data(np.clip(red_square_rgb * prop, 0.0, 1.0))
         red_square_pred = pred[sup1_rect[1]:sup1_rect[1] + size, sup1_rect[0]:sup1_rect[0] + size]
         red_pred.set_data(red_square_pred)
-        # red_pred.set_alpha(np.clip(red_square_pred + (idx / nr_preds * 1.333), 0.0, 1.0))
-        red_pred.set_alpha((red_square_pred > THRESHOLD).astype(np.float32))
+        red_pred.set_alpha(np.where(red_square_pred > THRESHOLD, 1.0, red_square_pred / THRESHOLD).astype(np.float32))
 
         blue_rgb.set_data(np.clip(blue_square_rgb, 0.0, 1.0))
-        # blue_rgb.set_data(np.clip(blue_square_rgb * prop, 0.0, 1.0))
         blue_square_pred = pred[sup2_rect[1]:sup2_rect[1] + size, sup2_rect[0]:sup2_rect[0] + size]
         blue_pred.set_data(blue_square_pred)
-        # blue_pred.set_alpha(np.clip(blue_square_pred + (idx / nr_preds * 1.333), 0.0, 1.0))
-        blue_pred.set_alpha((blue_square_pred > THRESHOLD).astype(np.float32))
+        blue_pred.set_alpha(np.where(blue_square_pred > THRESHOLD, 1.0, blue_square_pred / THRESHOLD).astype(np.float32))
 
         time_text.set_text(str(round(times[j], 1)))
 

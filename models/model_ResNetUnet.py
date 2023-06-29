@@ -16,7 +16,7 @@ class ResidualBlock(nn.Module):
     def __init__(self, in_channels, out_channels):
         super(ResidualBlock, self).__init__()
 
-        self.conv1 = nn.LazyConv2d(out_channels, 1, padding=1)
+        self.conv1 = nn.LazyConv2d(out_channels, 1, padding=0)
         self.bn1 = nn.LazyBatchNorm2d()
         self.relu = nn.ReLU()
 
@@ -141,7 +141,7 @@ def train(
         encoder_only=False,
     )
 
-    model = UNet(input_dim=10, output_dim=1, size_pow2=4)
+    model = UNet(input_dim=10, output_dim=1, size_pow2=6)
 
     wmape = torchmetrics.WeightedMeanAbsolutePercentageError(); wmape.__name__ = "wmape"
     mae = torchmetrics.MeanAbsoluteError(); mae.__name__ = "mae"
@@ -174,7 +174,7 @@ if __name__ == "__main__":
     LEARNING_RATE = 0.001
     NUM_EPOCHS = 250
     BATCH_SIZE = 16
-    NAME = "model_ResNetUnet"
+    NAME = "model_ResNetUnetLarge"
 
     def predict_func(model, epoch):
         model.eval()
@@ -205,7 +205,7 @@ if __name__ == "__main__":
         beo.array_to_raster(
             predicted,
             reference=img_path,
-            out_path=F"../visualisations/pred_MSE_{epoch}.tif",
+            out_path=F"../visualisations/pred_MSELarge_{epoch}.tif",
         )
 
     print(f"Summary for: {NAME}")
