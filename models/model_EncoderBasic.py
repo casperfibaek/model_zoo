@@ -6,6 +6,8 @@ import torchmetrics
 import sys; sys.path.append("../")
 from utils import load_data, training_loop
 
+
+
 class CNN_BasicEncoder(nn.Module):
     """
     Basic CNN encoder for the MNIST dataset

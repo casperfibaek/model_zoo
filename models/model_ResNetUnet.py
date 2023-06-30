@@ -11,7 +11,6 @@ from utils import (
 
 
 
-
 class ResidualBlock(nn.Module):
     def __init__(self, in_channels, out_channels):
         super(ResidualBlock, self).__init__()

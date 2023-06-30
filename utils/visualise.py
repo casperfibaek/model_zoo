@@ -33,8 +33,8 @@ places = [
         "id": "0",
         "name": "Naestved",
         "name_abr": "naeastved",
-        "blue": [1000, 1650], # red
-        "red": [700, 350],
+        "sqr1": [700, 350],
+        "sqr2": [1000, 1650],
         "rgb": "../data/images/naestved_s2.tif",
         "out_path": "C:/Users/casper.fibaek/OneDrive - ESA/Desktop/projects/model_zoo/visualisations/pred_MSELarge_naestved.mp4",
     },
@@ -126,15 +126,15 @@ for idx, place in enumerate(places):
     ax_sup2.set_facecolor(IMG_BACKGROUND)
 
     size = 500
-    sup1_rect = place["red"]
-    sup2_rect = place["blue"]
+    sup1_rect = place["sqr1"]
+    sup2_rect = place["sqr2"]
 
     lw = 3
     rect1 = patches.Rectangle((sup1_rect[0], sup1_rect[1]), size, size, linewidth=lw, edgecolor=SQR_1, facecolor='none')
     rect2 = patches.Rectangle((sup2_rect[0], sup2_rect[1]), size, size, linewidth=lw, edgecolor=SQR_2, facecolor='none')
 
-    ax_sup1_border = patches.Rectangle((lw / 2, lw / 2), size - (lw + (lw / 2)), size - (lw + (lw / 2)), linewidth=lw, edgecolor=SQR_1, facecolor='none')
-    ax_sup2_border = patches.Rectangle((lw / 2, lw / 2), size - (lw + (lw / 2)), size - (lw + (lw / 2)), linewidth=lw, edgecolor=SQR_2, facecolor='none')
+    ax_sqr1_border = patches.Rectangle((lw / 2, lw / 2), size - (lw + (lw / 2)), size - (lw + (lw / 2)), linewidth=lw, edgecolor=SQR_1, facecolor='none')
+    ax_sqr2_border = patches.Rectangle((lw / 2, lw / 2), size - (lw + (lw / 2)), size - (lw + (lw / 2)), linewidth=lw, edgecolor=SQR_2, facecolor='none')
 
     rgb_image = place["rgb"]
     rgb_image = beo.raster_to_array(rgb_image, filled=True, fill_value=0.0, cast=np.float32, bands=[3, 2, 1])
@@ -148,27 +148,27 @@ for idx, place in enumerate(places):
     predictions = ready_image(IMG_GLOB, divisions=DIVISIONS, limit=LIMIT)
     print(f"Read: {fig_name}")
 
-    red_square_rgb = rgb_image[sup1_rect[1]:sup1_rect[1]+size, sup1_rect[0]:sup1_rect[0]+size, :]
-    red_square_pred = predictions[0, sup1_rect[1]:sup1_rect[1] + size, sup1_rect[0]:sup1_rect[0] + size]
+    sqr1_data_rgb = rgb_image[sup1_rect[1]:sup1_rect[1]+size, sup1_rect[0]:sup1_rect[0]+size, :]
+    sqr1_data_pred = predictions[0, sup1_rect[1]:sup1_rect[1] + size, sup1_rect[0]:sup1_rect[0] + size]
 
-    blue_square_rgb = rgb_image[sup2_rect[1]:sup2_rect[1]+size, sup2_rect[0]:sup2_rect[0]+size, :]
-    blue_square_pred = predictions[0, sup2_rect[1]:sup2_rect[1] + size, sup2_rect[0]:sup2_rect[0] + size]
+    sqr2_data_rgb = rgb_image[sup2_rect[1]:sup2_rect[1]+size, sup2_rect[0]:sup2_rect[0]+size, :]
+    sqr2_data_pred = predictions[0, sup2_rect[1]:sup2_rect[1] + size, sup2_rect[0]:sup2_rect[0] + size]
 
-    # main
+    # Main prediction window
     main_rgb = ax_main.imshow(rgb_image, interpolation="antialiased")
     ax_main.add_patch(rect1)
     ax_main.add_patch(rect2)
     main_pred = ax_main.imshow(predictions[0], vmin=VMIN, vmax=VMAX, interpolation="antialiased", cmap=IMG_RAMP, alpha=np.zeros_like(predictions[0]))
 
-    # red
-    red_rgb = ax_sup1.imshow(red_square_rgb, interpolation="antialiased")
-    ax_sup1.add_patch(ax_sup1_border)
-    red_pred = ax_sup1.imshow(red_square_pred, vmin=VMIN, vmax=VMAX, interpolation="antialiased", cmap=IMG_RAMP, alpha=np.zeros_like(red_square_pred))
+    # First Square
+    sqr1_rgb = ax_sup1.imshow(sqr1_data_rgb, interpolation="antialiased")
+    ax_sup1.add_patch(ax_sqr1_border)
+    sqr1_pred = ax_sup1.imshow(sqr1_data_pred, vmin=VMIN, vmax=VMAX, interpolation="antialiased", cmap=IMG_RAMP, alpha=np.zeros_like(sqr1_data_pred))
 
-    # blue
-    blue_rgb = ax_sup2.imshow(blue_square_rgb, interpolation="antialiased")
-    ax_sup2.add_patch(ax_sup2_border)
-    blue_pred = ax_sup2.imshow(blue_square_pred, vmin=VMIN, vmax=VMAX, interpolation="antialiased", cmap=IMG_RAMP, alpha=np.zeros_like(blue_square_pred))
+    # Second Square
+    sqr2_rgb = ax_sup2.imshow(sqr2_data_rgb, interpolation="antialiased")
+    ax_sup2.add_patch(ax_sqr2_border)
+    sqr2_pred = ax_sup2.imshow(sqr2_data_pred, vmin=VMIN, vmax=VMAX, interpolation="antialiased", cmap=IMG_RAMP, alpha=np.zeros_like(sqr2_data_pred))
 
     warm_up = DIVISIONS * PRERUN
     times = np.array([0.0] * warm_up + list(np.arange(1, len(predictions) + 1)), dtype=np.float32) / DIVISIONS
@@ -184,14 +184,14 @@ for idx, place in enumerate(places):
     assert total_length == len(times), "Times and predictions are not the same length"
 
     def updatefig(j):
-        global ax_main, ax_sup1, ax_sup2, rgb_image, predictions, red_rgb, blue_rgb, sup1_rect, sup1_rect, red_pred, blue_pred, time_text, place_text, THRESHOLD
+        global ax_main, ax_sup1, ax_sup2, rgb_image, predictions, sqr1_rgb, sqr2_rgb, sup1_rect, sup1_rect, sqr1_pred, sqr2_pred, time_text, place_text, THRESHOLD
 
         if j < warm_up:
             main_rgb.set_data(rgb_image)
-            red_rgb.set_data(red_square_rgb)
-            blue_rgb.set_data(blue_square_rgb)
+            sqr1_rgb.set_data(sqr1_data_rgb)
+            sqr2_rgb.set_data(sqr2_data_rgb)
 
-            return [main_rgb, main_pred, red_rgb, red_pred, blue_rgb, blue_pred]
+            return [main_rgb, main_pred, sqr1_rgb, sqr1_pred, sqr2_rgb, sqr2_pred]
         
         idx = j - warm_up
         pred = predictions[idx, :, :]
@@ -200,19 +200,19 @@ for idx, place in enumerate(places):
         main_pred.set_data(pred)
         main_pred.set_alpha(np.where(pred > THRESHOLD, 1.0, pred / THRESHOLD).astype(np.float32))
 
-        red_rgb.set_data(np.clip(red_square_rgb, 0.0, 1.0))
-        red_square_pred = pred[sup1_rect[1]:sup1_rect[1] + size, sup1_rect[0]:sup1_rect[0] + size]
-        red_pred.set_data(red_square_pred)
-        red_pred.set_alpha(np.where(red_square_pred > THRESHOLD, 1.0, red_square_pred / THRESHOLD).astype(np.float32))
+        sqr1_rgb.set_data(np.clip(sqr1_data_rgb, 0.0, 1.0))
+        sqr1_data_pred = pred[sup1_rect[1]:sup1_rect[1] + size, sup1_rect[0]:sup1_rect[0] + size]
+        sqr1_pred.set_data(sqr1_data_pred)
+        sqr1_pred.set_alpha(np.where(sqr1_data_pred > THRESHOLD, 1.0, sqr1_data_pred / THRESHOLD).astype(np.float32))
 
-        blue_rgb.set_data(np.clip(blue_square_rgb, 0.0, 1.0))
-        blue_square_pred = pred[sup2_rect[1]:sup2_rect[1] + size, sup2_rect[0]:sup2_rect[0] + size]
-        blue_pred.set_data(blue_square_pred)
-        blue_pred.set_alpha(np.where(blue_square_pred > THRESHOLD, 1.0, blue_square_pred / THRESHOLD).astype(np.float32))
+        sqr2_rgb.set_data(np.clip(sqr2_data_rgb, 0.0, 1.0))
+        sqr2_data_pred = pred[sup2_rect[1]:sup2_rect[1] + size, sup2_rect[0]:sup2_rect[0] + size]
+        sqr2_pred.set_data(sqr2_data_pred)
+        sqr2_pred.set_alpha(np.where(sqr2_data_pred > THRESHOLD, 1.0, sqr2_data_pred / THRESHOLD).astype(np.float32))
 
         time_text.set_text(str(round(times[j], 1)))
 
-        return [main_rgb, main_pred, red_rgb, red_pred, blue_rgb, blue_pred]
+        return [main_rgb, main_pred, sqr1_rgb, sqr1_pred, sqr2_rgb, sqr2_pred]
 
     anim = animation.FuncAnimation(fig, updatefig, frames=range(len(times)), interval=30, blit=True)
     anim.save(fig_out_path, writer=animation.FFMpegWriter(fps=30, bitrate=1000000), savefig_kwargs={"facecolor": IMG_BACKGROUND})

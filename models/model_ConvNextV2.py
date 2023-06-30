@@ -14,19 +14,30 @@ from utils import (
 
 # Reference implementation: https://github.com/facebookresearch/ConvNeXt-V2/blob/main/models/convnextv2.py
 # https://github.com/huggingface/pytorch-image-models/tree/main/timm/layers
+# Update Tensor truncator --> Official implementation should be on 2.0.1
 
-# Copyright (c) Meta Platforms, Inc. and affiliates.
+"""
+    TODO:
+        - What does groups do?
+        - Implement Incept ConvNext layers
+        - Change the architecture to be image-to-image
+            - That is, add a decoder framework.
+            - Model seem to be based on channel_last -> should all be converted to channel_last?
+"""
 
-# All rights reserved.
-
-# This source code is licensed under the license found in the
-# LICENSE file in the root directory of this source tree.
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from utils import LayerNorm, GRN, DropPath, trunc_normal_
+from utils import (
+    LayerNorm,
+    GRN,
+    drop_path, # OBS: drop_path should be class, and trunc_normal likewise.
+    trunc_normal_,
+)
+
+DropPath = drop_path
 
 class Block(nn.Module):
     """ ConvNeXtV2 Block.
@@ -39,7 +50,7 @@ class Block(nn.Module):
         super().__init__()
         self.dwconv = nn.Conv2d(dim, dim, kernel_size=7, padding=3, groups=dim) # depthwise conv
         self.norm = LayerNorm(dim, eps=1e-6)
-        self.pwconv1 = nn.Linear(dim, 4 * dim) # pointwise/1x1 convs, implemented with linear layers
+        self.pwconv1 = nn.Linear(dim, 4 * dim) # pointwise/1x1 convs, implemented with linear layers <- why?
         self.act = nn.GELU()
         self.grn = GRN(4 * dim)
         self.pwconv2 = nn.Linear(4 * dim, dim)
@@ -70,15 +81,19 @@ class ConvNeXtV2(nn.Module):
         drop_path_rate (float): Stochastic depth rate. Default: 0.
         head_init_scale (float): Init scaling value for classifier weights and biases. Default: 1.
     """
-    def __init__(self, in_chans=3, num_classes=1000, 
-                 depths=[3, 3, 9, 3], dims=[96, 192, 384, 768], 
-                 drop_path_rate=0., head_init_scale=1.
-                 ):
+    def __init__(self, *,
+        in_channels=3,
+        num_classes=1000, 
+        depths=[3, 3, 9, 3],
+        dims=[96, 192, 384, 768],
+        drop_path_rate=0.0,
+        head_init_scale=1.0,
+    ):
         super().__init__()
         self.depths = depths
         self.downsample_layers = nn.ModuleList() # stem and 3 intermediate downsampling conv layers
         stem = nn.Sequential(
-            nn.Conv2d(in_chans, dims[0], kernel_size=4, stride=4),
+            nn.Conv2d(in_channels, dims[0], kernel_size=4, stride=4),
             LayerNorm(dims[0], eps=1e-6, data_format="channels_first")
         )
         self.downsample_layers.append(stem)
