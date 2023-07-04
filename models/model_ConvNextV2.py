@@ -16,6 +16,9 @@ from utils import (
 # https://github.com/huggingface/pytorch-image-models/tree/main/timm/layers
 # Update Tensor truncator --> Official implementation should be on 2.0.1
 
+# Check these implementation of ResNextUnet as well
+# https://github.com/indzhykulianlab/bism/tree/main/bism/modules
+
 """
     TODO:
         - What does groups do?
@@ -33,20 +36,15 @@ import torch.nn.functional as F
 from utils import (
     LayerNorm,
     GRN,
-    drop_path, # OBS: drop_path should be class, and trunc_normal likewise.
-    trunc_normal_,
 )
-
-DropPath = drop_path
 
 class Block(nn.Module):
     """ ConvNeXtV2 Block.
     
     Args:
         dim (int): Number of input channels.
-        drop_path (float): Stochastic depth rate. Default: 0.0
     """
-    def __init__(self, dim, drop_path=0.):
+    def __init__(self, dim):
         super().__init__()
         self.dwconv = nn.Conv2d(dim, dim, kernel_size=7, padding=3, groups=dim) # depthwise conv
         self.norm = LayerNorm(dim, eps=1e-6)
@@ -54,7 +52,7 @@ class Block(nn.Module):
         self.act = nn.GELU()
         self.grn = GRN(4 * dim)
         self.pwconv2 = nn.Linear(4 * dim, dim)
-        self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
+
 
     def forward(self, x):
         input = x
@@ -66,8 +64,8 @@ class Block(nn.Module):
         x = self.grn(x)
         x = self.pwconv2(x)
         x = x.permute(0, 3, 1, 2) # (N, H, W, C) -> (N, C, H, W)
+        x = input + x
 
-        x = input + self.drop_path(x)
         return x
 
 class ConvNeXtV2(nn.Module):
@@ -78,22 +76,29 @@ class ConvNeXtV2(nn.Module):
         num_classes (int): Number of classes for classification head. Default: 1000
         depths (tuple(int)): Number of blocks at each stage. Default: [3, 3, 9, 3]
         dims (int): Feature dimension at each stage. Default: [96, 192, 384, 768]
-        drop_path_rate (float): Stochastic depth rate. Default: 0.
         head_init_scale (float): Init scaling value for classifier weights and biases. Default: 1.
     """
     def __init__(self, *,
-        in_channels=3,
-        num_classes=1000, 
+        input_dim=3,
+        output_dim=1, 
         depths=[3, 3, 9, 3],
         dims=[96, 192, 384, 768],
-        drop_path_rate=0.0,
         head_init_scale=1.0,
+        weight_init_mean=0.0,
+        weight_init_std=0.02,
     ):
         super().__init__()
+
+        self.initializer = torch.nn.init.trunc_normal_
+        self.initializer_mean = weight_init_mean
+        self.initializer_std = weight_init_std
+        self.initializer_a = -weight_init_std * 2.0
+        self.initializer_b = weight_init_std * 2.0
+
         self.depths = depths
         self.downsample_layers = nn.ModuleList() # stem and 3 intermediate downsampling conv layers
         stem = nn.Sequential(
-            nn.Conv2d(in_channels, dims[0], kernel_size=4, stride=4),
+            nn.Conv2d(input_dim, dims[0], kernel_size=4, stride=4),
             LayerNorm(dims[0], eps=1e-6, data_format="channels_first")
         )
         self.downsample_layers.append(stem)
@@ -105,17 +110,16 @@ class ConvNeXtV2(nn.Module):
             self.downsample_layers.append(downsample_layer)
 
         self.stages = nn.ModuleList() # 4 feature resolution stages, each consisting of multiple residual blocks
-        dp_rates=[x.item() for x in torch.linspace(0, drop_path_rate, sum(depths))] 
         cur = 0
         for i in range(4):
             stage = nn.Sequential(
-                *[Block(dim=dims[i], drop_path=dp_rates[cur + j]) for j in range(depths[i])]
+                *[Block(dim=dims[i]) for j in range(depths[i])]
             )
             self.stages.append(stage)
             cur += depths[i]
 
         self.norm = nn.LayerNorm(dims[-1], eps=1e-6) # final norm layer
-        self.head = nn.Linear(dims[-1], num_classes)
+        self.head = nn.Linear(dims[-1], output_dim)
 
         self.apply(self._init_weights)
         self.head.weight.data.mul_(head_init_scale)
@@ -123,13 +127,15 @@ class ConvNeXtV2(nn.Module):
 
     def _init_weights(self, m):
         if isinstance(m, (nn.Conv2d, nn.Linear)):
-            trunc_normal_(m.weight, std=.02)
-            nn.init.constant_(m.bias, 0)
+            self.initializer(m.weight, self.initializer_mean, self.initializer_std)
+            if m.bias is not None:
+                nn.init.constant_(m.bias, 0)
 
     def forward_features(self, x):
         for i in range(4):
             x = self.downsample_layers[i](x)
             x = self.stages[i](x)
+
         return self.norm(x.mean([-2, -1])) # global average pooling, (N, C, H, W) -> (N, C)
 
     def forward(self, x):
@@ -139,35 +145,11 @@ class ConvNeXtV2(nn.Module):
 
 
 def convnextv2_atto(**kwargs):
-    model = ConvNeXtV2(depths=[2, 2, 6, 2], dims=[40, 80, 160, 320], **kwargs)
-    return model
-
-def convnextv2_femto(**kwargs):
-    model = ConvNeXtV2(depths=[2, 2, 6, 2], dims=[48, 96, 192, 384], **kwargs)
-    return model
-
-def convnext_pico(**kwargs):
-    model = ConvNeXtV2(depths=[2, 2, 6, 2], dims=[64, 128, 256, 512], **kwargs)
-    return model
-
-def convnextv2_nano(**kwargs):
-    model = ConvNeXtV2(depths=[2, 2, 8, 2], dims=[80, 160, 320, 640], **kwargs)
+    model = ConvNeXtV2(depths=[2, 6, 2], dims=[40, 160, 320], **kwargs)
     return model
 
 def convnextv2_tiny(**kwargs):
-    model = ConvNeXtV2(depths=[3, 3, 9, 3], dims=[96, 192, 384, 768], **kwargs)
-    return model
-
-def convnextv2_base(**kwargs):
-    model = ConvNeXtV2(depths=[3, 3, 27, 3], dims=[128, 256, 512, 1024], **kwargs)
-    return model
-
-def convnextv2_large(**kwargs):
-    model = ConvNeXtV2(depths=[3, 3, 27, 3], dims=[192, 384, 768, 1536], **kwargs)
-    return model
-
-def convnextv2_huge(**kwargs):
-    model = ConvNeXtV2(depths=[3, 3, 27, 3], dims=[352, 704, 1408, 2816], **kwargs)
+    model = ConvNeXtV2(depths=[3, 9, 3], dims=[96, 384, 768], **kwargs)
     return model
 
 
@@ -186,10 +168,10 @@ def train(
         with_augmentations=True,
         num_workers=0,
         batch_size=batch_size,
-        encoder_only=False,
+        encoder_only=True,
     )
 
-    model = UNet(input_dim=10, output_dim=1, size_pow2=4)
+    model = convnextv2_atto(input_dim=10, output_dim=1)
 
     wmape = torchmetrics.WeightedMeanAbsolutePercentageError(); wmape.__name__ = "wmape"
     mae = torchmetrics.MeanAbsoluteError(); mae.__name__ = "mae"
@@ -222,7 +204,7 @@ if __name__ == "__main__":
     LEARNING_RATE = 0.001
     NUM_EPOCHS = 250
     BATCH_SIZE = 16
-    NAME = "model_ResNetUnet"
+    NAME = "model_ResNextV2"
 
     def predict_func(model, epoch):
         model.eval()
@@ -253,11 +235,11 @@ if __name__ == "__main__":
         beo.array_to_raster(
             predicted,
             reference=img_path,
-            out_path=F"../visualisations/pred_MSE_{epoch}.tif",
+            out_path=F"../visualisations/pred_ResNextV2MSE_{epoch}.tif",
         )
 
     print(f"Summary for: {NAME}")
-    summary(UNet(output_dim=1), input_size=(BATCH_SIZE, 10, 64, 64))
+    summary(convnextv2_atto(input_dim=10, output_dim=1), input_size=(BATCH_SIZE, 10, 64, 64))
 
     train(
         num_epochs=NUM_EPOCHS,
