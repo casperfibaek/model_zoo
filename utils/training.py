@@ -8,7 +8,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from torch.cuda.amp import GradScaler, autocast
 
-from .training_utils import patience_calculator
+from .training_utils import patience_calculator, cosine_scheduler
 
 
 def training_loop(
@@ -20,6 +20,7 @@ def training_loop(
     train_loader: DataLoader,
     val_loader: DataLoader,
     test_loader: DataLoader,
+    batch_size: int,
     metrics: list = None,
     name="model",
     out_folder="../trained_models/",
@@ -27,6 +28,8 @@ def training_loop(
     t_mult=2,
     max_patience=50,
     eta_min=0.000001,
+    weight_decay=0.05,
+    weight_decay_end=0.001,
     predict_func=None,
 ) -> None:
         
@@ -42,8 +45,15 @@ def training_loop(
 
     model.to(device)
 
+    if weight_decay_end is None:
+        weight_decay_end = weight_decay
+
+    num_training_steps_per_epoch = len(train_loader) // batch_size
+    wd_schedule_values = cosine_scheduler(
+        weight_decay, weight_decay_end, num_epochs, num_training_steps_per_epoch)
+
     # Loss and optimizer
-    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=wd_schedule_values[0])
     scaler = GradScaler()
 
     # Save the initial learning rate in optimizer's param_groups
@@ -67,6 +77,9 @@ def training_loop(
     # Training loop
     for epoch in range(num_epochs):
         model.train()
+
+        for param_group in optimizer.param_groups:
+            param_group['weight_decay'] = wd_schedule_values[int(epoch * batch_size)]  # updated value
 
         # Initialize the running loss
         train_loss = 0.0
