@@ -8,7 +8,9 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from torch.cuda.amp import GradScaler, autocast
 
-from .training_utils import patience_calculator, cosine_scheduler
+import wandb
+
+from .training_utils import cosine_scheduler, convert_torch_to_float
 
 
 def training_loop(
@@ -20,19 +22,19 @@ def training_loop(
     train_loader: DataLoader,
     val_loader: DataLoader,
     test_loader: DataLoader,
-    batch_size: int,
     metrics: list = None,
     name="model",
+    project="model_zoo",
     out_folder="../trained_models/",
-    t_0=20,
-    t_mult=2,
-    max_patience=50,
-    eta_min=0.000001,
+    patience=20,
+    learning_rate_end=0.000001,
     weight_decay=0.05,
-    weight_decay_end=0.001,
+    weight_decay_end=0.0001,
+    warmup_epochs=10,
+    warmup_lr_start=0.0000001,
+    use_wandb=True,
     predict_func=None,
 ) -> None:
-        
     torch.set_default_device(device)
 
     if torch.cuda.is_available():
@@ -43,50 +45,65 @@ def training_loop(
     print("Starting training...")
     print("")
 
+    if use_wandb:
+        # start a new wandb run to track this script
+        wandb.init(
+            # set the wandb project where this run will be logged
+            project=project,
+            
+            # track hyperparameters and run metadata
+            config={
+                "learning_rate": learning_rate,
+                "architecture": name,
+                "dataset": "DK_Structure_small",
+                "epochs": num_epochs + warmup_epochs,
+            }
+        )
+
     model.to(device)
 
     if weight_decay_end is None:
         weight_decay_end = weight_decay
 
-    num_training_steps_per_epoch = len(train_loader) // batch_size
     wd_schedule_values = cosine_scheduler(
-        weight_decay, weight_decay_end, num_epochs, num_training_steps_per_epoch)
+        weight_decay, weight_decay_end, num_epochs + warmup_epochs, warmup_epochs, weight_decay_end,
+    )
+
+    lr_schedule_values = cosine_scheduler(
+        learning_rate, learning_rate_end, num_epochs + warmup_epochs, warmup_epochs, warmup_lr_start,
+    )
 
     # Loss and optimizer
-    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=wd_schedule_values[0])
+    optimizer = torch.optim.AdamW(model.parameters())
     scaler = GradScaler()
 
     # Save the initial learning rate in optimizer's param_groups
     for param_group in optimizer.param_groups:
-        param_group['initial_lr'] = learning_rate
-
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-        optimizer,
-        t_0,
-        t_mult,
-        eta_min=eta_min,
-        last_epoch=num_epochs - 1,
-    )
+        param_group['initial_lr'] = lr_schedule_values[0]
+        param_group['weight_decay'] = wd_schedule_values[0]
 
     best_epoch = 0
     best_loss = None
     best_model_state = model.state_dict().copy()
     epochs_no_improve = 0
 
-
     # Training loop
-    for epoch in range(num_epochs):
+    for epoch in range(num_epochs + warmup_epochs):
+        if epoch == warmup_epochs:
+            print("Finished warmup. Starting training...")
+
         model.train()
 
         for param_group in optimizer.param_groups:
-            param_group['weight_decay'] = wd_schedule_values[int(epoch * batch_size)]  # updated value
+            param_group['weight_decay'] = wd_schedule_values[epoch]
+            param_group['lr'] = lr_schedule_values[epoch]
 
         # Initialize the running loss
         train_loss = 0.0
         train_metrics_values = { metric.__name__: 0.0 for metric in metrics }
 
         # Initialize the progress bar for training
-        train_pbar = tqdm(train_loader, total=len(train_loader), desc=f"Epoch {epoch + 1}/{num_epochs}")
+        train_pbar = tqdm(train_loader, total=len(train_loader), desc=f"Epoch {epoch + 1}/{num_epochs + warmup_epochs}")
 
         for i, (images, labels) in enumerate(train_pbar):
             # Move inputs and targets to the device (GPU)
@@ -103,9 +120,6 @@ def training_loop(
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
                 scaler.update()
-
-            # Update the scheduler
-            scheduler.step()
 
             train_loss += loss.item()
 
@@ -140,19 +154,26 @@ def training_loop(
                             val_metrics_values[metric.__name__] += metric(outputs, labels)
 
                 # Append val_loss to the train_pbar
-                train_pbar.set_postfix({
-                    "loss": f"{train_loss / (i + 1):.4f}",
-                    **{name: f"{value / (i + 1):.4f}" for name, value in train_metrics_values.items()},
-                    "val_loss": f"{val_loss / (j + 1):.4f}",
-                    **{f"val_{name}": f"{value / (j + 1):.4f}" for name, value in val_metrics_values.items()},
-                }, refresh=True)
+                loss_dict = {
+                    "loss": train_loss / (i + 1),
+                    **{name: value / (i + 1) for name, value in train_metrics_values.items()},
+                    "val_loss": val_loss / (j + 1),
+                    **{f"val_{name}": value / (j + 1) for name, value in val_metrics_values.items()},
+                }
+                loss_dict = { key: convert_torch_to_float(value) for key, value in loss_dict.items() }
+                loss_dict_str = { key: f"{value:.4f}" for key, value in loss_dict.items() }
+
+                train_pbar.set_postfix(loss_dict_str, refresh=True)
+
+                if use_wandb:
+                    wandb.log(loss_dict)
 
                 if best_loss is None:
                     best_epoch = epoch
                     best_loss = val_loss
                     best_model_state = model.state_dict().copy()
 
-                    if predict_func is not None:
+                    if predict_func is not None and epoch >= warmup_epochs:
                         predict_func(model, epoch + 1)
 
                 elif best_loss > val_loss:
@@ -168,7 +189,7 @@ def training_loop(
                     epochs_no_improve += 1
 
         # Early stopping
-        if epochs_no_improve == patience_calculator(epoch, t_0, t_mult, max_patience):
+        if epochs_no_improve == patience:
             print(f'Early stopping triggered after {epoch + 1} epochs.')
             break
 
@@ -196,3 +217,6 @@ def training_loop(
 
     # Save the model
     torch.save(best_model_state, os.path.join(out_folder, f"{name}.pt"))
+
+    if use_wandb:
+        wandb.finish()

@@ -3,7 +3,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torchvision.transforms import Resize
 
 
 def patience_calculator(epoch, t_0, t_m, max_patience=50):
@@ -83,25 +82,26 @@ class GRN(nn.Module):
         return self.gamma * (x * Nx) + self.beta + x
 
 
-def cosine_scheduler(base_value, final_value, epochs, niter_per_ep, warmup_epochs=0,
+def cosine_scheduler(base_value, final_value, epochs, warmup_epochs=0,
                      start_warmup_value=0, warmup_steps=-1):
     warmup_schedule = np.array([])
-    warmup_iters = warmup_epochs * niter_per_ep
+    warmup_iters = warmup_epochs
     if warmup_steps > 0:
         warmup_iters = warmup_steps
     # print("Set warmup steps = %d" % warmup_iters)
     if warmup_epochs > 0:
         warmup_schedule = np.linspace(start_warmup_value, base_value, warmup_iters)
 
-    iters = np.arange(epochs * niter_per_ep - warmup_iters)
+    iters = np.arange(epochs - warmup_iters)
     schedule = np.array(
         [final_value + 0.5 * (base_value - final_value) * (1 + math.cos(math.pi * i / (len(iters)))) for i in iters])
 
     schedule = np.concatenate((warmup_schedule, schedule))
 
-    assert len(schedule) == epochs * niter_per_ep
+    assert len(schedule) == epochs
 
     return schedule
+
 
 class SE_Block(nn.Module):
     "credits: https://github.com/moskomule/senet.pytorch/blob/master/senet/se_module.py#L4"
@@ -121,7 +121,41 @@ class SE_Block(nn.Module):
         y = self.excitation(y).view(bs, c, 1, 1)
 
         return x * y.expand_as(x)
-    
+
+
+class SE_BlockV2(nn.Module):
+    # The is a custom implementation of the ideas presented in the paper:
+    # https://www.sciencedirect.com/science/article/abs/pii/S0031320321003460
+    def __init__(self, channels, reduction=16):
+        super(SE_BlockV2, self).__init__()
+
+        self.channels = channels
+        self.reduction = reduction
+   
+        self.fc_spatial = nn.Sequential(
+            nn.AdaptiveAvgPool2d(8),
+            nn.Conv2d(channels, channels, kernel_size=2, stride=2, groups=channels, bias=False),
+            nn.BatchNorm2d(channels),
+        )
+
+        self.fc_reduction = nn.Linear(in_features=channels * (4 * 4), out_features=channels // self.reduction)
+        self.fc_extention = nn.Linear(in_features=channels // self.reduction , out_features=channels)
+        self.sigmoid = nn.Sigmoid()
+
+
+    def forward(self, x):
+        identity = x
+        x = self.fc_spatial(identity)
+        x = F.gelu(x)
+        x = x.reshape(x.size(0), -1)
+        x = self.fc_reduction(x)
+        x = F.gelu(x)
+        x = self.fc_extention(x)
+        x = self.sigmoid(x)
+        x = x.reshape(x.size(0), x.size(1), 1, 1)
+
+        return x
+
 
 def get_activation(activation_name):
     if activation_name == "relu":
@@ -140,3 +174,16 @@ def get_activation(activation_name):
         return nn.Tanh()
     else:
         raise ValueError("activation must be one of leaky_relu, prelu, selu, gelu, sigmoid, tanh, relu")
+
+
+def convert_torch_to_float(tensor):
+    if torch.is_tensor(tensor):
+        return float(tensor.detach().cpu().numpy().astype(np.float32))
+    elif isinstance(tensor, np.ndarray) and tensor.size == 1:
+        return float(tensor.astype(np.float32))
+    elif isinstance(tensor, float):
+        return tensor
+    elif isinstance(tensor, int):
+        return float(tensor)
+    else:
+        raise ValueError("Cannot convert tensor to float")

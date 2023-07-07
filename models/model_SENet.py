@@ -1,7 +1,7 @@
 import sys; sys.path.append("../")
 import torch
 import torch.nn as nn
-from utils import SE_Block, get_activation
+from utils import get_activation, SE_BlockV2
 
 
 class SENetBLock(nn.Module):
@@ -19,7 +19,7 @@ class SENetBLock(nn.Module):
 
         self.activation = get_activation(activation)
  
-        self.se = SE_Block(out_channels, reduction)
+        self.se = SE_BlockV2(out_channels, reduction)
 
         self.shortcut = nn.Identity()
         if in_channels != out_channels:
@@ -41,7 +41,7 @@ class SENetBLock(nn.Module):
         x = self.conv3(x)
         x = self.bn3(x)
 
-        x = self.se(x)
+        x = x * self.se(x)
 
         x += self.shortcut(identity)
         x = self.activation(x)
@@ -134,7 +134,7 @@ class SENetUnet(nn.Module):
 
         self.stem = nn.Sequential(
             nn.Conv2d(self.input_dim, self.dims[0], kernel_size=self.stem_kernel_size, padding=self.stem_kernel_size // 2),
-            SE_Block(self.dims[0]),
+            SENetBLock(self.dims[0], self.dims[0]),
             nn.BatchNorm2d(self.dims[0]),
             get_activation(self.activation)
         )
@@ -173,10 +173,10 @@ class SENetUnet(nn.Module):
             nn.Conv2d(self.dims[0], self.output_dim, kernel_size=3, padding=1),
         )
 
-    def initialize_weights(self):
+    def initialize_weights(self, std=0.02):
         for m in self.modules():
             if isinstance(m, (nn.Conv2d, nn.ConvTranspose2d, nn.Linear)):
-                nn.init.trunc_normal_(m.weight, std=0.02)
+                nn.init.trunc_normal_(m.weight, std=std, a=-2 * std, b=2 * std)
 
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
@@ -186,26 +186,33 @@ class SENetUnet(nn.Module):
                 nn.init.constant_(m.bias, 0)
 
     def forward(self, x):
+        identity = x
         skip_connections = []
-        
-        x = self.stem(x)
+
+        # Stem
+        x = self.stem(identity)
+
+        # Encoder
         for block in self.encoder_blocks:
             x, skip = block(x)
             skip_connections.append(skip)
 
+        # Bridge
         x = self.bridge(x)
 
+        # Decoder
         for block in self.decoder_blocks:
             skip = skip_connections.pop()
             x = block(x, skip)
 
+        # Head
         x = self.head(x)
 
+        # PostProcessing
         if self.clamp_output:
             x = torch.clamp(x, self.clamp_min, self.clamp_max)
 
         return x
-
 
 
 class SENet(nn.Module):
@@ -229,7 +236,7 @@ class SENet(nn.Module):
 
         self.stem = nn.Sequential(
             nn.Conv2d(self.input_dim, self.dims[0], kernel_size=self.stem_kernel_size, padding=self.stem_kernel_size // 2),
-            SE_Block(self.dims[0]),
+            SENetBLock(self.dims[0], self.dims[0]),
             nn.BatchNorm2d(self.dims[0]),
             get_activation(self.activation),
         )
@@ -252,10 +259,10 @@ class SENet(nn.Module):
             nn.Linear(self.dims[-1], self.output_dim),
         )
 
-    def initialize_weights(self):
+    def initialize_weights(self, std=0.02):
         for m in self.modules():
             if isinstance(m, (nn.Conv2d, nn.ConvTranspose2d, nn.Linear)):
-                nn.init.trunc_normal_(m.weight, std=0.02)
+                nn.init.trunc_normal_(m.weight, std=std, a=-2 * std, b=2 * std)
 
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
@@ -349,8 +356,8 @@ if __name__ == "__main__":
 
     BATCH_SIZE = 32
     CHANNELS = 10
-    HEIGHT = 128
-    WIDTH = 128
+    HEIGHT = 64
+    WIDTH = 64
 
     model = SENetUnet_pico(
         input_dim=10,

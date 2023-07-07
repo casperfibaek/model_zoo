@@ -21,7 +21,7 @@ class ConvNextV2Block(nn.Module):
 
         self.dwconv = nn.Conv2d(dwconv_in_channels, out_channels, kernel_size=kernel_size, padding=kernel_size // 2, groups=dwconv_in_channels) # depthwise conv
         self.norm = LayerNorm(out_channels, eps=1e-6)
-        self.pwconv1 = nn.Linear(out_channels, 4 * out_channels) # pointwise/1x1 convs, implemented with linear layers <- why?
+        self.pwconv1 = nn.Linear(out_channels, 4 * out_channels)
         self.act = nn.GELU()
         self.grn = GRN(4 * out_channels)
         self.pwconv2 = nn.Linear(4 * out_channels, out_channels)

@@ -6,6 +6,7 @@ import matplotlib.gridspec as gridspec
 import matplotlib.patches as patches
 import buteo as beo
 from glob import glob
+from tqdm import tqdm
 from functools import cmp_to_key
 
 # NOTE: To run this you need ffmpeg installed. `conda install -c conda-forge ffmpeg`
@@ -23,7 +24,7 @@ SQR_1 = "#FFC300"
 SQR_2 = "#C70039"
 LOC = 2
 FOLDER = "../visualisations/"
-IMG_GLOB = f"{FOLDER}pred_MSELarge_*.tif"
+IMG_GLOB = f"{FOLDER}pred_SENetFemto-6_*.tif"
 VMIN = 0.0
 VMAX = 100.0 
 THRESHOLD = 1.0 # Minumum value to be considered a prediction (0.01 for [0, 1] and 1.0 for [0, 100])
@@ -36,7 +37,7 @@ places = [
         "sqr1": [700, 350],
         "sqr2": [1000, 1650],
         "rgb": "../data/images/naestved_s2.tif",
-        "out_path": "C:/Users/casper.fibaek/OneDrive - ESA/Desktop/projects/model_zoo/visualisations/pred_MSELarge_naestved.mp4",
+        "out_path": "C:/Users/casper.fibaek/OneDrive - ESA/Desktop/projects/model_zoo/visualisations/pred_SENet_naestved.mp4",
     },
 ]
 
@@ -108,6 +109,8 @@ for idx, place in enumerate(places):
     fig_name = place["name"]
     fig_name_abr = place["name_abr"]
     fig_out_path = place["out_path"]
+
+    print(f"Reading: {fig_name}")
 
     fig = plt.figure(figsize=(HEIGHT / DPI, WIDTH / DPI), dpi=DPI, facecolor=IMG_BACKGROUND)
 
@@ -183,6 +186,7 @@ for idx, place in enumerate(places):
     total_length = len(predictions) + warm_up
     assert total_length == len(times), "Times and predictions are not the same length"
 
+    tqbar = tqdm(total=total_length, desc=f"Saving: {fig_name}", position=0, leave=True)
     def updatefig(j):
         global ax_main, ax_sup1, ax_sup2, rgb_image, predictions, sqr1_rgb, sqr2_rgb, sup1_rect, sup1_rect, sqr1_pred, sqr2_pred, time_text, place_text, THRESHOLD
 
@@ -214,6 +218,17 @@ for idx, place in enumerate(places):
 
         return [main_rgb, main_pred, sqr1_rgb, sqr1_pred, sqr2_rgb, sqr2_pred]
 
-    anim = animation.FuncAnimation(fig, updatefig, frames=range(len(times)), interval=30, blit=True)
-    anim.save(fig_out_path, writer=animation.FFMpegWriter(fps=30, bitrate=1000000), savefig_kwargs={"facecolor": IMG_BACKGROUND})
+    anim = animation.FuncAnimation(
+        fig,
+        updatefig,
+        frames=range(len(times)),
+        interval=30,
+        blit=True,
+    )
+    anim.save(
+        fig_out_path,
+        writer=animation.FFMpegWriter(fps=30, bitrate=1000000),
+        savefig_kwargs={"facecolor": IMG_BACKGROUND},
+        progress_callback=lambda _x, _y: tqbar.update(),
+    )
     print(f"Saved: {fig_name}")

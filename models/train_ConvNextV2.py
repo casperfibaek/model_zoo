@@ -51,7 +51,6 @@ def train(
         train_loader=dl_train,
         val_loader=dl_val,
         test_loader=dl_test,
-        batch_size=batch_size,
         name=name,
         predict_func=predict_func,
     )
