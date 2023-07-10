@@ -26,12 +26,13 @@ def training_loop(
     name="model",
     project="model_zoo",
     out_folder="../trained_models/",
-    patience=10,
+    patience=20,
     learning_rate_end=0.00001,
     weight_decay=0.05,
     weight_decay_end=0.0001,
     warmup_epochs=10,
     warmup_lr_start=0.0000001,
+    min_epochs=50,
     use_wandb=True,
     save_best_model=False,
     predict_func=None,
@@ -175,34 +176,34 @@ def training_loop(
                     wandb.log(loss_dict)
 
                 if best_loss is None:
-                    best_epoch = epoch
+                    best_epoch = epoch_current
                     best_loss = val_loss
                     best_model_state = model.state_dict().copy()
 
                     if predict_func is not None and epoch >= warmup_epochs:
-                        predict_func(model, epoch + 1)
+                        predict_func(model, epoch_current)
 
                 elif best_loss > val_loss:
-                    best_epoch = epoch
+                    best_epoch = epoch_current
                     best_loss = val_loss
                     best_model_state = model.state_dict().copy()
 
                     if predict_func is not None and epoch >= warmup_epochs:
-                        predict_func(model, epoch + 1)
+                        predict_func(model, epoch_current)
 
                     epochs_no_improve = 0
                 else:
                     epochs_no_improve += 1
 
         # Early stopping
-        if epochs_no_improve == patience and epoch >= warmup_epochs:
-            print(f'Early stopping triggered after {epoch + 1 - warmup_epochs} epochs.')
+        if epochs_no_improve == patience and epoch >= warmup_epochs and epoch_current >= min_epochs + patience:
+            print(f'Early stopping triggered after {epoch_current} epochs.')
             break
 
     # Load the best weights
     model.load_state_dict(best_model_state)
 
-    print("Finished Training. Best epoch: ", best_epoch + 1 - warmup_epochs)
+    print("Finished Training. Best epoch: ", best_epoch)
     print("")
     print("Starting Testing...")
     model.eval()

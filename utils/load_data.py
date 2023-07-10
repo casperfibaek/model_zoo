@@ -69,7 +69,7 @@ def load_data(*, x="s2", y="area", with_augmentations=False, num_workers=0, batc
                 beo.AugmentationMirrorXY(p=0.2, inplace=True),
                 # beo.AugmentationCutmix(p=0.2, inplace=True),
                 # beo.AugmentationNoiseNormal(p=0.2, inplace=True),
-            ]
+            ],
         )
     else:
         ds_train = beo.Dataset(x_train, y_train, callback=callback_encoder if encoder_only else callback_decoder)

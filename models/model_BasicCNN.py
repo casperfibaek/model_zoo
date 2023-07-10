@@ -18,16 +18,16 @@ class BasicCNNBlock(nn.Module):
         if in_channels != out_channels:
             self.match_channels = nn.Sequential(
                 nn.Conv2d(in_channels, out_channels, kernel_size=1, padding=0, bias=False),
-                get_normalization(norm, out_channels), # Has to be different, two learn two different scalars
+                get_normalization(norm, out_channels),
             )
 
         self.conv1 = nn.Conv2d(self.in_channels, self.out_channels, 1, padding=0)
         self.norm1 = get_normalization(norm, self.out_channels)
 
-        self.conv2 = nn.Conv2d(self.out_channels, self.out_channels, 3, padding=self.padding, groups=1)
+        self.conv2 = nn.Conv2d(self.out_channels, self.out_channels, 3, padding=self.padding, groups=self.out_channels)
         self.norm2 = get_normalization(norm, self.out_channels)
         
-        self.conv3 = nn.Conv2d(self.out_channels, self.out_channels, 3, padding=self.padding, groups=self.out_channels)
+        self.conv3 = nn.Conv2d(self.out_channels, self.out_channels, 3, padding=self.padding, groups=1)
         self.norm3 = get_normalization(norm, self.out_channels)
 
 
@@ -78,6 +78,35 @@ class BasicEncoderBlock(nn.Module):
         return x, before_downsample
 
 
+class BasicAttentionBlock(nn.Module):
+    """ Attention block """
+    def __init__(self, lower_channels, higher_channels, *, norm="batch", activation="relu", padding="same"):
+        super(BasicAttentionBlock, self).__init__()
+
+        self.lower_channels = lower_channels
+        self.higher_channels = higher_channels
+        self.activation = get_activation(activation)
+        self.norm = norm
+        self.padding = padding
+
+        self.match = nn.Sequential(
+            nn.Conv2d(self.higher_channels, self.lower_channels, kernel_size=1, padding=0, bias=False),
+            get_normalization(self.norm, self.lower_channels),
+            self.activation,
+        )
+        self.compress = nn.Conv2d(self.lower_channels, 1, kernel_size=1, padding=0, bias=False)
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x, skip):
+        x = self.match(x)
+        x = x + skip
+        x = self.activation(x)
+        x = self.compress(x)
+        x = self.sigmoid(x)
+        
+        return x
+
+
 class BasicDecoderBlock(nn.Module):
     """ Decoder block """
     def __init__(self, depth, in_channels, out_channels, *, norm="batch", activation="relu", padding="same"):
@@ -93,6 +122,7 @@ class BasicDecoderBlock(nn.Module):
 
         self.upsample = nn.UpsamplingBilinear2d(scale_factor=2)
         self.match_channels = BasicCNNBlock(self.in_channels + self.out_channels, self.out_channels, norm=self.norm, activation=self.activation_blocks, padding=self.padding)
+        self.attention = BasicAttentionBlock(self.out_channels, self.in_channels, norm=self.norm, activation=self.activation_blocks, padding=self.padding)
 
         self.blocks = []
         for _ in range(self.depth):
@@ -101,9 +131,10 @@ class BasicDecoderBlock(nn.Module):
 
         self.blocks = nn.Sequential(*self.blocks)
     
-    def forward(self, x, y): # y is the skip connection
+    def forward(self, x, skip): # y is the skip connection
         x = self.upsample(x)
-        x = torch.cat([x, y], dim=1)
+        attn = self.attention(x, skip)
+        x = torch.cat([x, skip * attn], dim=1)
         x = self.match_channels(x)
 
         for i in range(self.depth):
@@ -350,7 +381,7 @@ if __name__ == "__main__":
     HEIGHT = 64
     WIDTH = 64
 
-    model = BasicUnet_pico(
+    model = BasicUnet_femto(
         input_dim=10,
         output_dim=1,
     )
@@ -361,3 +392,15 @@ if __name__ == "__main__":
         model,
         input_size=(BATCH_SIZE, CHANNELS, HEIGHT, WIDTH),
     )
+
+# ====================================================================================================
+# Total params: 2,326,921
+# Trainable params: 2,326,921
+# Non-trainable params: 0
+# Total mult-adds (G): 16.61
+# ====================================================================================================
+# Input size (MB): 5.24
+# Forward/backward pass size (MB): 1992.11
+# Params size (MB): 9.31
+# Estimated Total Size (MB): 2006.66
+# ====================================================================================================

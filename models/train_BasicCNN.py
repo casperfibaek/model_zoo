@@ -104,8 +104,8 @@ if __name__ == "__main__":
     BATCH_SIZE = 32
     NAME = "BasicCNNFemto"
 
-    model = BasicUnet_base(input_dim=10, output_dim=1, clamp_output=True, clamp_min=0.0, clamp_max=100.0, activation="relu")
-    model.initialize_weights(0.02)
+    model = BasicUnet_femto(input_dim=10, output_dim=1, clamp_output=True, clamp_min=0.0, clamp_max=100.0, activation="relu")
+    model.initialize_weights(0.05)
 
     train(
         num_epochs=NUM_EPOCHS,

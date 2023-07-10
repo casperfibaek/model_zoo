@@ -24,10 +24,10 @@ class BasicCNNBlock(nn.Module):
         self.conv1 = nn.Conv2d(self.in_channels, self.out_channels, 1, padding=0)
         self.norm1 = get_normalization(norm, self.out_channels)
 
-        self.conv2 = nn.Conv2d(self.out_channels, self.out_channels, 3, padding=self.padding, groups=1)
+        self.conv2 = nn.Conv2d(self.out_channels, self.out_channels, 3, padding=self.padding, groups=self.out_channels)
         self.norm2 = get_normalization(norm, self.out_channels)
         
-        self.conv3 = nn.Conv2d(self.out_channels, self.out_channels, 3, padding=self.padding, groups=self.out_channels)
+        self.conv3 = nn.Conv2d(self.out_channels, self.out_channels, 3, padding=self.padding, groups=1)
         self.norm3 = get_normalization(norm, self.out_channels)
 
 
@@ -46,21 +46,86 @@ class BasicCNNBlock(nn.Module):
 
 
 
+class AttentionBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, input_dims, *, norm="batch", activation="relu", padding="same"):
+        super(AttentionBlock, self).__init__()
+
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.input_dims = input_dims
+        self.padding = padding
+        self.activation = get_activation(activation)
+
+        self.attention_x = nn.Sequential(
+            nn.ConvTranspose2d(self.in_channels, self.in_channels, kernel_size=2, stride=2),
+            nn.Conv2d(self.in_channels, self.input_dims, 1, padding=0),
+            get_normalization(norm, self.input_dims),
+            self.activation,
+        )
+        self.attention_y = BasicCNNBlock(self.input_dims, self.input_dims, norm=norm, activation=activation, padding=self.padding, residual=True)
+        self.attention_out = BasicCNNBlock(self.input_dims, self.input_dims, norm=norm, activation=activation, padding=self.padding, residual=True)
+
+        self.attention_collapse = nn.Conv2d(self.input_dims, 1, 1, padding=0)
+        self.sigmoid = nn.Sigmoid()
+
+        self.fc_pool = nn.AdaptiveAvgPool2d(8)
+        self.fc_conv = nn.Conv2d(self.input_dims, self.input_dims, kernel_size=2, stride=2, groups=self.input_dims, bias=False)
+        self.fc_norm1 = get_normalization(norm, self.input_dims)
+        self.fc_norm2 = get_normalization(norm, self.input_dims)
+
+        # The input size here is wrong. please fix
+        self.linear1 = nn.Linear(in_features=self.input_dims, out_features=self.input_dims // 2)
+        self.linear2 = nn.Linear(in_features=self.input_dims // 2, out_features=self.input_dims)
+
+
+    def forward(self, x, skip): # x is the input, y is the original input resampled
+        x = self.attention_x(x)
+        skip = self.attention_y(skip)
+        attn = x + skip
+        attn = self.activation(attn)
+
+        attn_spatial = self.attention_collapse(attn)
+        attn_spatial = self.sigmoid(attn_spatial)
+
+        attn_channel = self.fc_pool(attn)
+        attn_channel = self.fc_conv(attn_channel)
+        attn_channel = self.fc_norm1(attn_channel)
+        attn_channel = self.activation(attn_channel)
+        import pdb; pdb.set_trace()
+        attn_channel = attn_channel.reshape(attn_channel.size(0), -1)
+
+        attn_channel = self.linear1(attn_channel)
+        attn_channel = self.fc_norm2(attn_channel)
+        attn_channel = self.activation(attn_channel)
+        attn_channel = self.linear2(attn_channel)
+        attn_channel = self.sigmoid(attn_channel)
+        attn_channel = attn_channel.reshape(attn_channel.size(0), self.input_dims, 1, 1)
+
+        import pdb; pdb.set_trace()
+
+        attn = self.attention_out(skip) * (attn_spatial + attn_channel)
+
+        return attn
+
+
 class MixerBlock(nn.Module):
     def __init__(self, in_channels, out_channels, input_dims, *, norm="batch", activation="relu"):
         super(MixerBlock, self).__init__()
 
         self.in_channels = in_channels
         self.out_channels = out_channels
+        self.input_dims = input_dims
+        self.activation = get_activation(activation)
 
         self.upsample = nn.UpsamplingBilinear2d(scale_factor=2)
-        self.matcher = BasicCNNBlock(in_channels, out_channels - input_dims, norm=norm, activation=activation, padding="same", residual=True)
-        self.raw_block = BasicCNNBlock(input_dims, input_dims, norm=norm, activation=activation, padding="same", residual=True)
+        self.matcher = BasicCNNBlock(in_channels, out_channels - self.input_dims, norm=norm, activation=activation, padding="same", residual=True)
         self.mixer = BasicCNNBlock(out_channels, out_channels, norm=norm, activation=activation, padding="same", residual=True)
 
-        self.activation = get_activation(activation)
+        self.raw_block = BasicCNNBlock(self.input_dims, self.input_dims, norm=norm, activation=activation, padding="same", residual=True)
+        self.attn_block = AttentionBlock(self.in_channels, self.out_channels, self.input_dims, norm=norm, activation=activation, padding="same")
+
         self.norm1 = get_normalization(norm, in_channels)
-        self.norm2 = get_normalization(norm, self.out_channels - input_dims)
+        self.norm2 = get_normalization(norm, self.out_channels - self.input_dims)
         self.norm3 = get_normalization(norm, self.out_channels)
 
         self.stem = nn.Sequential(
@@ -70,9 +135,10 @@ class MixerBlock(nn.Module):
             self.activation,
         )
 
-    def forward(self, x, y): # x is the input, y is the original input resampled
+    def forward(self, x, skip): # x is the input, y is the original input resampled
+        identity = x
         x = self.stem(x)
-        x = torch.cat((x, self.raw_block(y)), dim=1)
+        x = torch.cat((x, self.attn_block(identity, skip)), dim=1)
         x = self.mixer(x)
 
         return x
@@ -108,7 +174,7 @@ class Pyramid(nn.Module):
         super(Pyramid, self).__init__()
 
         self.depths = [3, 3, 3, 3] if depths is None else depths
-        self.dims = [64, 64, 64, 64] if dims is None else dims
+        self.dims = [32, 48, 64, 96] if dims is None else dims
         self.input_size = input_size
         self.output_dim = output_dim
         self.input_dim = input_dim
@@ -132,14 +198,6 @@ class Pyramid(nn.Module):
 
         self.stem = nn.Sequential(
             self.pools[0],
-            SE_BlockV3(
-                input_dim,
-                reduction_c=1,
-                reduction_s=2 if self.sizes[0] < 16 else self.sizes[0] // 8,
-                activation=self.activation,
-                norm=self.norm,
-                first_layer=True,
-            ),
             nn.Flatten(),
             nn.Linear(self.stem_size, self.stem_size // self.stem_squeeze, bias=False),
             nn.BatchNorm1d(self.stem_size // self.stem_squeeze),
@@ -215,11 +273,9 @@ class Pyramid(nn.Module):
         x = self.channel_match(x)
 
         for i in range(len(self.depths)):
-            if i < len(self.depths) - 1:
-                x = self.mixer_blocks[i](x, self.pools[i + 1](identity))
-            else:
-                x = self.mixer_blocks[i](x, identity)
-            
+            id_pool = self.pools[i + 1](identity) if i < len(self.depths) - 1 else identity
+
+            x = self.mixer_blocks[i](x, id_pool)
             x = self.decoder_blocks[i](x)
             x = self.squeeze_blocks[i](x)
 
@@ -243,6 +299,8 @@ if __name__ == "__main__":
         input_size=64,
         input_dim=10,
         output_dim=1,
+        depths=[3, 3, 3, 3],
+        dims=[32, 48, 64, 96],
     )
     
     model(torch.randn((BATCH_SIZE, CHANNELS, HEIGHT, WIDTH)))
@@ -251,3 +309,15 @@ if __name__ == "__main__":
         model,
         input_size=(BATCH_SIZE, CHANNELS, HEIGHT, WIDTH),
     )
+
+# ====================================================================================================
+# Total params: 2,414,564
+# Trainable params: 2,414,564
+# Non-trainable params: 0
+# Total mult-adds (G): 79.20
+# ====================================================================================================
+# Input size (MB): 5.24
+# Forward/backward pass size (MB): 4561.48
+# Params size (MB): 4.04
+# Estimated Total Size (MB): 4570.77
+# ====================================================================================================

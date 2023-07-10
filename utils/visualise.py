@@ -24,7 +24,7 @@ SQR_1 = "#FFC300"
 SQR_2 = "#C70039"
 LOC = 2
 FOLDER = "../visualisations/"
-IMG_GLOB = f"{FOLDER}pred_SENetFemto-6_*.tif"
+IMG_GLOB = f"{FOLDER}pred_PyramidFemto_*.tif"
 VMIN = 0.0
 VMAX = 100.0 
 THRESHOLD = 1.0 # Minumum value to be considered a prediction (0.01 for [0, 1] and 1.0 for [0, 100])
@@ -37,7 +37,7 @@ places = [
         "sqr1": [700, 350],
         "sqr2": [1000, 1650],
         "rgb": "../data/images/naestved_s2.tif",
-        "out_path": "C:/Users/casper.fibaek/OneDrive - ESA/Desktop/projects/model_zoo/visualisations/pred_SENet_naestved.mp4",
+        "out_path": "C:/Users/casper.fibaek/OneDrive - ESA/Desktop/projects/model_zoo/visualisations/pred_Diamond_naestved.mp4",
     },
 ]
 

@@ -14,6 +14,7 @@ class ConvNextV2Block(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=7):
         super().__init__()
         self.shortcut = nn.Identity()
+
         dwconv_in_channels = out_channels
         if in_channels != out_channels:
             self.shortcut = nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1, bias=True)
@@ -82,7 +83,11 @@ class ConvNextV2DecoderBlock(nn.Module):
         self.in_channels = in_channels
         self.out_channels = out_channels
 
-        self.upsample = nn.ConvTranspose2d(self.in_channels, self.out_channels, kernel_size=2, stride=2)
+        self.upsample = nn.Sequential(
+            nn.ConvTranspose2d(self.in_channels, self.out_channels, kernel_size=2, stride=2),
+            nn.BatchNorm2d(self.out_channels),
+            nn.ReLU6(),
+        )
 
         self.blocks = []
         for _ in range(self.depth):

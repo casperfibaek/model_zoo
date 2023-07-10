@@ -18,7 +18,8 @@ def train(
     use_wandb: bool = True,
     predict_func=None,
     save_best_model: bool = False,
-    patience=10,
+    patience=20,
+    min_epochs=50,
 ) -> str:
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -56,6 +57,7 @@ def train(
         predict_func=predict_func,
         save_best_model=save_best_model,
         patience=patience,
+        min_epochs=min_epochs,
     )
 
 def predict_func(model, epoch):
@@ -97,21 +99,24 @@ if __name__ == "__main__":
     import numpy as np
     from model_Pyramid import Pyramid
 
-    NUM_EPOCHS = 50
+    NUM_EPOCHS = 150
+    MIN_EPOCHS = 50
+    PATIENCE = 20
     LEARNING_RATE = 0.001
     BATCH_SIZE = 32
-    NAME = "BasicCNNFemto"
+    NAME = "PyramidFemto3"
 
     model = Pyramid(input_size=64, input_dim=10, output_dim=1, clamp_output=True, clamp_min=0.0, clamp_max=100.0, activation="relu")
-    model.initialize_weights(0.02)
+    model.initialize_weights(0.025)
 
     train(
         num_epochs=NUM_EPOCHS,
         learning_rate=LEARNING_RATE,
         batch_size=BATCH_SIZE,
+        min_epochs=MIN_EPOCHS,
         model=model,
         name=NAME,
         use_wandb=False,
-        patience=50,
-        # predict_func=predict_func,
+        patience=PATIENCE,
+        predict_func=predict_func,
     )

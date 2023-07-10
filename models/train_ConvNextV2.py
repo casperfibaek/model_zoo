@@ -28,8 +28,6 @@ def train(
 
     input_shape = dl_train.dataset[0][0].shape
     input_dim = input_shape[0]
-    input_height = input_shape[1]
-    input_width = input_shape[2]
 
     model = ConvNextV2Unet_femto(input_dim=input_dim, output_dim=1, clamp_output=True, clamp_min=0.0, clamp_max=100.0)
     model.initialize_weights()

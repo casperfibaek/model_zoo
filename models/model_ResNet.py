@@ -85,7 +85,12 @@ class ResNetDecoderBlock(nn.Module):
         self.in_channels = in_channels
         self.out_channels = out_channels
 
-        self.upsample = nn.ConvTranspose2d(self.in_channels, self.out_channels, kernel_size=2, stride=2)
+        # self.upsample = nn.Sequential(
+        #     nn.ConvTranspose2d(self.in_channels, self.out_channels, kernel_size=2, stride=2),
+        #     nn.BatchNorm2d(self.out_channels),
+        #     nn.ReLU6(),
+        # )
+        self.upsample = nn.UpsamplingBilinear2d(scale_factor=2)
 
         self.blocks = []
         for _ in range(self.depth):
