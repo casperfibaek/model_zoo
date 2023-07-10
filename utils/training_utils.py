@@ -17,6 +17,14 @@ def patience_calculator(epoch, t_0, t_m, max_patience=50):
     return p
 
 
+class Reshape(nn.Module):
+    def __init__(self, target_shape):
+        super(Reshape, self).__init__()
+        self.target_shape = target_shape
+    
+    def forward(self, x):
+        return x.reshape(*self.target_shape)
+
 
 class TiledMSE(nn.Module):
     """
@@ -70,14 +78,23 @@ class LayerNorm(nn.Module):
 
 class GRN(nn.Module):
     """ GRN (Global Response Normalization) layer """
-    def __init__(self, dim):
+    def __init__(self, dim, channel_first=False):
         super().__init__()
-        self.gamma = nn.Parameter(torch.zeros(1, 1, 1, dim))
-        self.beta = nn.Parameter(torch.zeros(1, 1, 1, dim))
+        self.channel_first = channel_first
+        if self.channel_first:
+            self.gamma = nn.Parameter(torch.zeros(1, dim, 1, 1))
+            self.beta = nn.Parameter(torch.zeros(1, dim, 1, 1))
+        else:
+            self.gamma = nn.Parameter(torch.zeros(1, 1, 1, dim))
+            self.beta = nn.Parameter(torch.zeros(1, 1, 1, dim))
 
     def forward(self, x):
-        Gx = torch.norm(x, p=2, dim=(1, 2), keepdim=True)
-        Nx = Gx / (Gx.mean(dim=-1, keepdim=True) + 1e-6)
+        if self.channel_first:
+            Gx = torch.norm(x, p=2, dim=(2, 3), keepdim=True)
+            Nx = Gx / (Gx.mean(dim=1, keepdim=True) + 1e-6)
+        else:
+            Gx = torch.norm(x, p=2, dim=(1, 2), keepdim=True)
+            Nx = Gx / (Gx.mean(dim=-1, keepdim=True) + 1e-6)
 
         return self.gamma * (x * Nx) + self.beta + x
 
@@ -105,13 +122,14 @@ def cosine_scheduler(base_value, final_value, epochs, warmup_epochs=0,
 
 class SE_Block(nn.Module):
     "credits: https://github.com/moskomule/senet.pytorch/blob/master/senet/se_module.py#L4"
-    def __init__(self, c, r=16):
+    def __init__(self, channels, reduction=16, activation="relu"):
         super().__init__()
+        self.reduction = reduction
         self.squeeze = nn.AdaptiveAvgPool2d(1)
         self.excitation = nn.Sequential(
-            nn.Linear(c, c // r, bias=False),
+            nn.Linear(channels, channels // self.reduction, bias=False),
             nn.ReLU(inplace=True),
-            nn.Linear(c // r, c, bias=False),
+            nn.Linear(channels // self.reduction, channels, bias=False),
             nn.Sigmoid()
         )
 
@@ -126,11 +144,12 @@ class SE_Block(nn.Module):
 class SE_BlockV2(nn.Module):
     # The is a custom implementation of the ideas presented in the paper:
     # https://www.sciencedirect.com/science/article/abs/pii/S0031320321003460
-    def __init__(self, channels, reduction=16):
+    def __init__(self, channels, reduction=16, activation="relu"):
         super(SE_BlockV2, self).__init__()
 
         self.channels = channels
         self.reduction = reduction
+        self.activation = get_activation(activation)
    
         self.fc_spatial = nn.Sequential(
             nn.AdaptiveAvgPool2d(8),
@@ -146,10 +165,10 @@ class SE_BlockV2(nn.Module):
     def forward(self, x):
         identity = x
         x = self.fc_spatial(identity)
-        x = F.gelu(x)
+        x = self.activation(x)
         x = x.reshape(x.size(0), -1)
         x = self.fc_reduction(x)
-        x = F.gelu(x)
+        x = self.activation(x)
         x = self.fc_extention(x)
         x = self.sigmoid(x)
         x = x.reshape(x.size(0), x.size(1), 1, 1)
@@ -157,23 +176,106 @@ class SE_BlockV2(nn.Module):
         return x
 
 
+class SE_BlockV3(nn.Module):
+    """ Squeeze and Excitation block with spatial and channel attention. """
+    def __init__(self, channels, reduction_c=2, reduction_s=8, activation="relu", norm="batch", first_layer=False):
+        super(SE_BlockV3, self).__init__()
+
+        self.channels = channels
+        self.first_layer = first_layer
+        self.reduction_c = reduction_c if not first_layer else 1
+        self.reduction_s = reduction_s
+        self.activation = get_activation(activation)
+   
+        self.fc_pool = nn.AdaptiveAvgPool2d(reduction_s)
+        self.fc_conv = nn.Conv2d(self.channels, self.channels, kernel_size=2, stride=2, groups=self.channels, bias=False)
+        self.fc_norm = get_normalization(norm, self.channels)
+
+        self.linear1 = nn.Linear(in_features=self.channels * (reduction_s // 2 * reduction_s // 2), out_features=self.channels // self.reduction_c)
+        self.linear2 = nn.Linear(in_features=self.channels // self.reduction_c, out_features=self.channels)
+
+        self.activation_output = nn.Softmax(dim=1) if first_layer else nn.Sigmoid()
+
+
+    def forward(self, x):
+        identity = x
+
+        x = self.fc_pool(x)
+        x = self.fc_conv(x)
+        x = self.fc_norm(x)
+        x = self.activation(x)
+        x = x.reshape(x.size(0), -1)
+        x = self.linear1(x)
+        x = self.activation(x)
+        x = self.linear2(x)
+
+        if self.first_layer:
+            x = self.activation_output(x) * x.size(1)
+        else:
+            x = self.activation_output(x)
+            
+        x = identity * x.reshape(x.size(0), x.size(1), 1, 1)
+
+        return x
+
+
 def get_activation(activation_name):
     if activation_name == "relu":
-        return nn.ReLU()
+        return nn.ReLU6(inplace=True)
+    elif isinstance(activation_name, torch.nn.modules.activation.ReLU6):
+        return activation_name
+
     elif activation_name == "gelu":
         return nn.GELU()
+    elif isinstance(activation_name, torch.nn.modules.activation.GELU):
+        return activation_name
+
     elif activation_name == "leaky_relu":
-        return nn.LeakyReLU()
+        return nn.LeakyReLU(inplace=True)
+    elif isinstance(activation_name, torch.nn.modules.activation.LeakyReLU):
+        return activation_name
+
     elif activation_name == "prelu":
         return nn.PReLU()
+    elif isinstance(activation_name, torch.nn.modules.activation.PReLU):
+        return activation_name
+
     elif activation_name == "selu":
-        return nn.SELU()
+        return nn.SELU(inplace=True)
+    elif isinstance(activation_name, torch.nn.modules.activation.SELU):
+        return activation_name
+
     elif activation_name == "sigmoid":
         return nn.Sigmoid()
+    elif isinstance(activation_name, torch.nn.modules.activation.Sigmoid):
+        return activation_name
+
     elif activation_name == "tanh":
         return nn.Tanh()
+    elif isinstance(activation_name, torch.nn.modules.activation.Tanh):
+        return activation_name
+
+    elif activation_name == "mish":
+        return nn.Mish()
+    elif isinstance(activation_name, torch.nn.modules.activation.Mish):
+        return activation_name
     else:
-        raise ValueError("activation must be one of leaky_relu, prelu, selu, gelu, sigmoid, tanh, relu")
+        raise ValueError(f"activation must be one of leaky_relu, prelu, selu, gelu, sigmoid, tanh, relu. Got: {activation_name}")
+
+
+def get_normalization(normalization_name, num_channels, num_groups=32):
+    if normalization_name == "batch":
+        return nn.BatchNorm2d(num_channels)
+    elif normalization_name == "instance":
+        return nn.InstanceNorm2d(num_channels)
+    elif normalization_name == "layer":
+        return LayerNorm(num_channels)
+    elif normalization_name == "group":
+        return nn.GroupNorm(num_groups=num_groups, num_channels=num_channels)
+    elif normalization_name == "none":
+        return nn.Identity()
+    else:
+        raise ValueError(f"normalization must be one of batch, instance, layer, group, none. Got: {normalization_name}")
 
 
 def convert_torch_to_float(tensor):

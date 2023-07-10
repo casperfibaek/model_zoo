@@ -235,10 +235,10 @@ class ConvNextV2(nn.Module):
             nn.Linear(self.dims[-1], self.output_dim),
         )
 
-    def initialize_weights(self):
+    def initialize_weights(self, std=0.02):
         for m in self.modules():
             if isinstance(m, (nn.Conv2d, nn.ConvTranspose2d, nn.Linear)):
-                nn.init.trunc_normal_(m.weight, std=0.02)
+                nn.init.trunc_normal_(m.weight, std=std, a=-2 * std, b=2 * std)
 
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)

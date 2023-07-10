@@ -33,7 +33,6 @@ def train(
 
     model = ResNetUnet_femto(input_dim=input_dim, output_dim=1, clamp_output=True, clamp_min=0.0, clamp_max=100.0)
     model.initialize_weights()
-    model(torch.randn((batch_size, input_dim, input_height, input_width)))
 
     wmape = torchmetrics.WeightedMeanAbsolutePercentageError(); wmape.__name__ = "wmape"
     mae = torchmetrics.MeanAbsoluteError(); mae.__name__ = "mae"

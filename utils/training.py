@@ -26,13 +26,14 @@ def training_loop(
     name="model",
     project="model_zoo",
     out_folder="../trained_models/",
-    patience=20,
-    learning_rate_end=0.000001,
+    patience=10,
+    learning_rate_end=0.00001,
     weight_decay=0.05,
     weight_decay_end=0.0001,
     warmup_epochs=10,
     warmup_lr_start=0.0000001,
     use_wandb=True,
+    save_best_model=False,
     predict_func=None,
 ) -> None:
     torch.set_default_device(device)
@@ -42,8 +43,10 @@ def training_loop(
     else:
         print("No CUDA device available.")
 
-    print("Starting training...")
-    print("")
+    if warmup_epochs > 0:
+        print(f"Starting warmup for {warmup_epochs} epochs...")
+    else:
+        print("Starting training...")
 
     if use_wandb:
         # start a new wandb run to track this script
@@ -89,7 +92,7 @@ def training_loop(
 
     # Training loop
     for epoch in range(num_epochs + warmup_epochs):
-        if epoch == warmup_epochs:
+        if epoch == warmup_epochs and warmup_epochs > 0:
             print("Finished warmup. Starting training...")
 
         model.train()
@@ -103,7 +106,10 @@ def training_loop(
         train_metrics_values = { metric.__name__: 0.0 for metric in metrics }
 
         # Initialize the progress bar for training
-        train_pbar = tqdm(train_loader, total=len(train_loader), desc=f"Epoch {epoch + 1}/{num_epochs + warmup_epochs}")
+        epoch_current = epoch + 1 if epoch < warmup_epochs else epoch + 1 - warmup_epochs
+        epoch_max = num_epochs if epoch >= warmup_epochs else warmup_epochs
+
+        train_pbar = tqdm(train_loader, total=len(train_loader), desc=f"Epoch {epoch_current}/{epoch_max}")
 
         for i, (images, labels) in enumerate(train_pbar):
             # Move inputs and targets to the device (GPU)
@@ -181,7 +187,7 @@ def training_loop(
                     best_loss = val_loss
                     best_model_state = model.state_dict().copy()
 
-                    if predict_func is not None:
+                    if predict_func is not None and epoch >= warmup_epochs:
                         predict_func(model, epoch + 1)
 
                     epochs_no_improve = 0
@@ -189,14 +195,14 @@ def training_loop(
                     epochs_no_improve += 1
 
         # Early stopping
-        if epochs_no_improve == patience:
-            print(f'Early stopping triggered after {epoch + 1} epochs.')
+        if epochs_no_improve == patience and epoch >= warmup_epochs:
+            print(f'Early stopping triggered after {epoch + 1 - warmup_epochs} epochs.')
             break
 
     # Load the best weights
     model.load_state_dict(best_model_state)
 
-    print("Finished Training. Best epoch: ", best_epoch + 1)
+    print("Finished Training. Best epoch: ", best_epoch + 1 - warmup_epochs)
     print("")
     print("Starting Testing...")
     model.eval()
@@ -216,7 +222,8 @@ def training_loop(
         print(f"Test Accuracy: {test_loss / (k + 1):.4f}")
 
     # Save the model
-    torch.save(best_model_state, os.path.join(out_folder, f"{name}.pt"))
+    if save_best_model:
+        torch.save(best_model_state, os.path.join(out_folder, f"{name}.pt"))
 
     if use_wandb:
         wandb.finish()

@@ -7,16 +7,16 @@ class ResNetBlock_V1_5(nn.Module):
     def __init__(self, in_channels, out_channels):
         super(ResNetBlock_V1_5, self).__init__()
 
-        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1, bias=False)
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=1, padding=1, bias=False)
         self.bn1 = nn.BatchNorm2d(out_channels)
 
         self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1, bias=False)
         self.bn2 = nn.BatchNorm2d(out_channels)
 
-        self.conv3 = nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1, bias=False)
+        self.conv3 = nn.Conv2d(out_channels, out_channels, kernel_size=1, padding=1, bias=False)
         self.bn3 = nn.BatchNorm2d(out_channels)
 
-        self.relu = nn.ReLU()
+        self.relu = nn.ReLU6()
 
         self.shortcut = nn.Identity()
         if in_channels != out_channels:
@@ -238,10 +238,10 @@ class ResNet(nn.Module):
             nn.Linear(self.dims[-1], self.output_dim),
         )
 
-    def initialize_weights(self):
+    def initialize_weights(self, std=0.02):
         for m in self.modules():
             if isinstance(m, (nn.Conv2d, nn.ConvTranspose2d, nn.Linear)):
-                nn.init.trunc_normal_(m.weight, std=0.02)
+                nn.init.trunc_normal_(m.weight, std=std, a=-2 * std, b=2 * std)
 
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)

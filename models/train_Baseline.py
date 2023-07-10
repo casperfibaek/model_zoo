@@ -5,20 +5,20 @@ import torch.nn as nn
 import torchmetrics
 
 from utils import load_data, training_loop, TiledMSE
-from model_SENet import SENet_femto, SENetUnet_femto
 
 
 def train(
     num_epochs: int,
     learning_rate: float,
     batch_size: int,
-    weight_init_std: float = 0.02,
-    activation: str = "gelu",
+    model: nn.Module = None,
     warmup_epochs: int = 10,
+    learning_rate_end: float = 0.00001,
     name=str,
     use_wandb: bool = True,
     predict_func=None,
     save_best_model: bool = False,
+    patience=10,
 ) -> str:
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -31,14 +31,6 @@ def train(
         encoder_only=False,
     )
 
-    input_shape = dl_train.dataset[0][0].shape
-    input_dim = input_shape[0]
-    input_height = input_shape[1]
-    input_width = input_shape[2]
-
-    model = SENetUnet_femto(input_dim=input_dim, output_dim=1, clamp_output=True, clamp_min=0.0, clamp_max=100.0, activation=activation)
-    model.initialize_weights(weight_init_std)
-
     wmape = torchmetrics.WeightedMeanAbsolutePercentageError(); wmape.__name__ = "wmape"
     mae = torchmetrics.MeanAbsoluteError(); mae.__name__ = "mae"
     mse = torchmetrics.MeanSquaredError(); mse.__name__ = "mse"
@@ -46,6 +38,7 @@ def train(
     training_loop(
         num_epochs=num_epochs,
         learning_rate=learning_rate,
+        learning_rate_end=learning_rate_end,
         model=model,
         criterion=TiledMSE(0.5),
         device=device,
@@ -62,6 +55,7 @@ def train(
         use_wandb=use_wandb,
         predict_func=predict_func,
         save_best_model=save_best_model,
+        patience=patience,
     )
 
 def predict_func(model, epoch):
@@ -101,65 +95,23 @@ if __name__ == "__main__":
     import warnings; warnings.filterwarnings("ignore", category=UserWarning)
     import buteo as beo
     import numpy as np
-    import wandb
+    from model_Baseline import BaselineNet
 
-    NUM_EPOCHS = 100
-    # LEARNING_RATE = 0.001
-    # BATCH_SIZE = 16
-    NAME = "SENetFemto"
+    NUM_EPOCHS = 50
+    LEARNING_RATE = 0.001
+    BATCH_SIZE = 32
+    NAME = "BasicCNNFemto"
 
-    # train(
-    #     num_epochs=NUM_EPOCHS,
-    #     learning_rate=LEARNING_RATE,
-    #     batch_size=BATCH_SIZE,
-    #     name=NAME,
-    #     use_wandb=False,
-    # )
+    model = BaselineNet(input_dim=10, output_dim=1, clamp_output=True, clamp_min=0.0, clamp_max=100.0, activation="relu")
+    model.initialize_weights(0.02)
 
-    # exit()
-
-    sweep_config = {
-        'method': 'random',
-        'metric': {
-            'name': 'val_loss',
-            'goal': 'minimize'   
-        },
-        'parameters': {
-            'learning_rate': {
-                "values": [0.01, 0.001, 0.0001],
-            },
-            'batch_size': {
-                'values': [8, 16, 32, 64, 128],
-            },
-            "weight_init_std": {
-                "values": [0.01, 0.02, 0.05, 0.1, 0.2],
-            },
-            "activation": {
-                "values": ["relu", "gelu"],
-            },
-            "warmup_epochs":{
-                "values": [0, 5, 10],
-            }
-        }
-    }
-
-    sweep_id = wandb.sweep(sweep_config)
-
-    def _train():
-        with wandb.init():
-            config = wandb.config
-
-            train(
-                num_epochs=NUM_EPOCHS,
-                name=NAME,
-                learning_rate=config.learning_rate,
-                batch_size=config.batch_size,
-                weight_init_std=config.weight_init_std,
-                activation=config.activation,
-                warmup_epochs=config.warmup_epochs,
-                use_wandb=True,
-                save_best_model=False,
-                predict_func=None,
-            )
-
-    wandb.agent(sweep_id, function=_train)
+    train(
+        num_epochs=NUM_EPOCHS,
+        learning_rate=LEARNING_RATE,
+        batch_size=BATCH_SIZE,
+        model=model,
+        name=NAME,
+        use_wandb=False,
+        patience=50,
+        # predict_func=predict_func,
+    )
