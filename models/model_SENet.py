@@ -8,13 +8,13 @@ class SENetBLock(nn.Module):
     def __init__(self, in_channels, out_channels, reduction=16, activation="gelu"):
         super(SENetBLock, self).__init__()
 
-        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1, bias=False)
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=1, padding=1, bias=False)
         self.bn1 = nn.BatchNorm2d(out_channels)
 
         self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1, bias=False)
         self.bn2 = nn.BatchNorm2d(out_channels)
 
-        self.conv3 = nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1, bias=False)
+        self.conv3 = nn.Conv2d(out_channels, out_channels, kernel_size=1, padding=1, bias=False)
         self.bn3 = nn.BatchNorm2d(out_channels)
 
         self.activation = get_activation(activation)
