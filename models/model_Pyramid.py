@@ -71,11 +71,9 @@ class AttentionBlock(nn.Module):
         self.fc_pool = nn.AdaptiveAvgPool2d(8)
         self.fc_conv = nn.Conv2d(self.input_dims, self.input_dims, kernel_size=2, stride=2, groups=self.input_dims, bias=False)
         self.fc_norm1 = get_normalization(norm, self.input_dims)
-        self.fc_norm2 = get_normalization(norm, self.input_dims)
-
-        # The input size here is wrong. please fix
-        self.linear1 = nn.Linear(in_features=self.input_dims, out_features=self.input_dims // 2)
-        self.linear2 = nn.Linear(in_features=self.input_dims // 2, out_features=self.input_dims)
+        self.fc_norm2 = get_normalization(norm, self.input_dims, dims=1)
+        self.linear1 = nn.Linear(in_features=self.input_dims * (4 * 4), out_features=self.input_dims)
+        self.linear2 = nn.Linear(in_features=self.input_dims, out_features=self.input_dims)
 
 
     def forward(self, x, skip): # x is the input, y is the original input resampled
@@ -91,9 +89,7 @@ class AttentionBlock(nn.Module):
         attn_channel = self.fc_conv(attn_channel)
         attn_channel = self.fc_norm1(attn_channel)
         attn_channel = self.activation(attn_channel)
-        import pdb; pdb.set_trace()
         attn_channel = attn_channel.reshape(attn_channel.size(0), -1)
-
         attn_channel = self.linear1(attn_channel)
         attn_channel = self.fc_norm2(attn_channel)
         attn_channel = self.activation(attn_channel)
@@ -101,9 +97,8 @@ class AttentionBlock(nn.Module):
         attn_channel = self.sigmoid(attn_channel)
         attn_channel = attn_channel.reshape(attn_channel.size(0), self.input_dims, 1, 1)
 
-        import pdb; pdb.set_trace()
-
-        attn = self.attention_out(skip) * (attn_spatial + attn_channel)
+        attn = self.attention_out(skip)
+        attn = ((attn * attn_spatial) + (attn * attn_channel)) / 2.0
 
         return attn
 
@@ -118,6 +113,9 @@ class MixerBlock(nn.Module):
         self.activation = get_activation(activation)
 
         self.upsample = nn.UpsamplingBilinear2d(scale_factor=2)
+        
+        self.pred_match = BasicCNNBlock(1, out_channels - self.input_dims, norm=norm, activation=activation, padding="same", residual=True)
+
         self.matcher = BasicCNNBlock(in_channels, out_channels - self.input_dims, norm=norm, activation=activation, padding="same", residual=True)
         self.mixer = BasicCNNBlock(out_channels, out_channels, norm=norm, activation=activation, padding="same", residual=True)
 
@@ -135,9 +133,10 @@ class MixerBlock(nn.Module):
             self.activation,
         )
 
-    def forward(self, x, skip): # x is the input, y is the original input resampled
+    def forward(self, x, skip, pred): # x is the input, y is the original input resampled
         identity = x
         x = self.stem(x)
+        x = x + self.pred_match(pred)
         x = torch.cat((x, self.attn_block(identity, skip)), dim=1)
         x = self.mixer(x)
 
@@ -267,24 +266,32 @@ class Pyramid(nn.Module):
 
     def forward(self, x):
         identity = x
+        pred = torch.Tensor(x.size(0), self.output_dim, self.input_size, self.input_size).zero_().to(x.device)
+        # TODO: Implement the progress tensor
+        # TODO: Implement start recursive after warmup
 
-        x = self.stem(x)
-        x = x.reshape(x.size(0), self.input_dim, self.sizes[0], self.sizes[0])
-        x = self.channel_match(x)
+        for _ in range(1):
+            x = self.stem(identity)
+            x = x.reshape(x.size(0), self.input_dim, self.sizes[0], self.sizes[0])
+            x = self.channel_match(x)
 
-        for i in range(len(self.depths)):
-            id_pool = self.pools[i + 1](identity) if i < len(self.depths) - 1 else identity
+            for i in range(len(self.depths)):
+                pool_id = self.pools[i + 1](identity) if i < len(self.depths) - 1 else identity
+                # pool_pred = self.pools[i + 1](pred) if i < len(self.depths) - 1 else pred
 
-            x = self.mixer_blocks[i](x, id_pool)
-            x = self.decoder_blocks[i](x)
-            x = self.squeeze_blocks[i](x)
+                # x = self.mixer_blocks[i](x, pool_id, pool_pred)
+                x = self.mixer_blocks[i](x, pool_id)
+                x = self.decoder_blocks[i](x)
+                x = self.squeeze_blocks[i](x)
 
-        x = self.head(x)
+            x = self.head(x)
 
-        if self.clamp_output:
-            x = torch.clamp(x, self.clamp_min, self.clamp_max)
+            if self.clamp_output:
+                x = torch.clamp(x, self.clamp_min, self.clamp_max)
 
-        return x
+            pred = x
+
+        return pred
 
 
 if __name__ == "__main__":

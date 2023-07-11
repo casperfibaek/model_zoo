@@ -104,7 +104,7 @@ if __name__ == "__main__":
     PATIENCE = 20
     LEARNING_RATE = 0.001
     BATCH_SIZE = 32
-    NAME = "PyramidFemto3"
+    NAME = "PyramidFemto4"
 
     model = Pyramid(input_size=64, input_dim=10, output_dim=1, clamp_output=True, clamp_min=0.0, clamp_max=100.0, activation="relu")
     model.initialize_weights(0.025)

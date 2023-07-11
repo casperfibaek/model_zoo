@@ -263,11 +263,21 @@ def get_activation(activation_name):
         raise ValueError(f"activation must be one of leaky_relu, prelu, selu, gelu, sigmoid, tanh, relu. Got: {activation_name}")
 
 
-def get_normalization(normalization_name, num_channels, num_groups=32):
+def get_normalization(normalization_name, num_channels, num_groups=32, dims=2):
     if normalization_name == "batch":
-        return nn.BatchNorm2d(num_channels)
+        if dims == 1:
+            return nn.BatchNorm1d(num_channels)
+        elif dims == 2:
+            return nn.BatchNorm2d(num_channels)
+        elif dims == 3:
+            return nn.BatchNorm3d(num_channels)
     elif normalization_name == "instance":
-        return nn.InstanceNorm2d(num_channels)
+        if dims == 1:
+            return nn.InstanceNorm1d(num_channels)
+        elif dims == 2:
+            return nn.InstanceNorm2d(num_channels)
+        elif dims == 3:
+            return nn.InstanceNorm3d(num_channels)
     elif normalization_name == "layer":
         return LayerNorm(num_channels)
     elif normalization_name == "group":
