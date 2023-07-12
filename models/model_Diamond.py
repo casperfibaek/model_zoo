@@ -2,7 +2,7 @@ import sys; sys.path.append("../")
 import torch
 import torch.nn as nn
 import numpy as np
-from utils import get_activation, get_normalization, SE_BlockV3
+from utils import get_activation, get_normalization
 
 
 class BasicCNNBlock(nn.Module):
@@ -19,7 +19,7 @@ class BasicCNNBlock(nn.Module):
         if in_channels != out_channels:
             self.match_channels = nn.Sequential(
                 nn.Conv2d(in_channels, out_channels, kernel_size=1, padding=0, bias=False),
-                get_normalization(norm, out_channels), # Has to be different, two learn two different scalars
+                get_normalization(norm, out_channels),
             )
 
         self.conv1 = nn.Conv2d(self.in_channels, self.out_channels, 1, padding=0)
@@ -47,78 +47,111 @@ class BasicCNNBlock(nn.Module):
 
 
 class AttentionBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, input_dims, *, norm="batch", activation="relu", padding="same"):
+    def __init__(self, in_channels, out_channels, input_dims, cur_depth, *, norm="batch", activation="relu", padding="same"):
         super(AttentionBlock, self).__init__()
 
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.input_dims = input_dims
         self.padding = padding
+        self.cur_depth = cur_depth
         self.activation = get_activation(activation)
 
         self.attention_x = nn.Sequential(
-            nn.ConvTranspose2d(self.in_channels, self.in_channels, kernel_size=2, stride=2),
+            nn.UpsamplingBilinear2d(scale_factor=2),
             nn.Conv2d(self.in_channels, self.input_dims, 1, padding=0),
+            get_normalization(norm, self.input_dims),
+            self.activation,
+        )
+        self.attention_y = nn.Sequential(
+            nn.Conv2d(self.input_dims, self.input_dims, 1, padding=0, groups=self.input_dims),
             get_normalization(norm, self.input_dims),
             self.activation,
         )
         self.attention_y = BasicCNNBlock(self.input_dims, self.input_dims, norm=norm, activation=activation, padding=self.padding, residual=True)
         self.attention_out = BasicCNNBlock(self.input_dims, self.input_dims, norm=norm, activation=activation, padding=self.padding, residual=True)
 
-        self.attention_collapse = nn.Conv2d(self.input_dims, 1, 1, padding=0)
-        self.sigmoid = nn.Sigmoid()
+        self.attention_collapse = nn.Conv2d(self.input_dims, 1, 3, padding=self.padding)
+        self.tahn = nn.Tanh()
 
-        self.fc_pool = nn.AdaptiveAvgPool2d(8)
-        self.fc_conv = nn.Conv2d(self.input_dims, self.input_dims, kernel_size=2, stride=2, groups=self.input_dims, bias=False)
+        self.upsample = nn.UpsamplingBilinear2d(scale_factor=2)
+        self.fc_pool = nn.AdaptiveAvgPool2d(4)
         self.fc_norm1 = get_normalization(norm, self.input_dims)
         self.fc_norm2 = get_normalization(norm, self.input_dims, dims=1)
         self.linear1 = nn.Linear(in_features=self.input_dims * (4 * 4), out_features=self.input_dims)
         self.linear2 = nn.Linear(in_features=self.input_dims, out_features=self.input_dims)
 
+        self.collapse_spatial = nn.Conv2d(self.cur_depth + 1, 1, 3, padding=self.padding)
+        self.collapse_channel = nn.Conv2d(self.input_dims * (self.cur_depth + 1), self.input_dims, 1, padding=self.padding)
 
-    def forward(self, x, skip): # x is the input, y is the original input resampled
+    def forward(self, x, skip, previous_attn): # x is the input, y is the original input resampled
         x = self.attention_x(x)
-        skip = self.attention_y(skip) # <-- This might not be necessary
+        skip = self.attention_y(skip)
         attn = x + skip
-        attn = self.activation(attn)
 
         attn_spatial = self.attention_collapse(attn)
-        attn_spatial = self.sigmoid(attn_spatial)
+        attn_spatial = self.tahn(attn_spatial)
 
         attn_channel = self.fc_pool(attn)
-        attn_channel = self.fc_conv(attn_channel)
-        attn_channel = self.fc_norm1(attn_channel)
-        attn_channel = self.activation(attn_channel)
         attn_channel = attn_channel.reshape(attn_channel.size(0), -1)
         attn_channel = self.linear1(attn_channel)
         attn_channel = self.fc_norm2(attn_channel)
         attn_channel = self.activation(attn_channel)
         attn_channel = self.linear2(attn_channel)
-        attn_channel = self.sigmoid(attn_channel)
         attn_channel = attn_channel.reshape(attn_channel.size(0), self.input_dims, 1, 1)
+        attn_channel = self.tahn(attn_channel)
+
+        # Consider when activations are being done.
+        # Merge all before activations..
+
+        if len(previous_attn) > 0:
+            spatials = [attn_spatial]
+            channels = [attn_channel]
+            for i in range(len(previous_attn)):
+                attn_spatial, attn_channel = previous_attn[i]
+                _iter = 0
+
+                # This should definitely not be a while loop.
+                while attn_spatial.size(2) < x.size(2) and _iter < 10:
+                    attn_spatial = self.upsample(attn_spatial)
+                    _iter += 1
+
+                spatials.append(attn_spatial)
+                channels.append(attn_channel)
+
+            attn_spatial = torch.cat(spatials, dim=1)
+            attn_channel = torch.cat(channels, dim=1)
+            
+            attn_spatial = self.collapse_spatial(attn_spatial)
+            attn_channel = self.collapse_channel(attn_channel)
+
+            attn_spatial = self.tahn(attn_spatial)
+            attn_channel = self.tahn(attn_channel)
 
         attn = self.attention_out(skip)
         attn = ((attn * attn_spatial) + (attn * attn_channel)) / 2.0
+        attn = self.activation(attn)
 
-        return attn
+        return attn, attn_spatial, attn_channel
 
 
 class MixerBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, input_dims, *, norm="batch", activation="relu"):
+    def __init__(self, in_channels, out_channels, input_dims, cur_depth, *, norm="batch", activation="relu"):
         super(MixerBlock, self).__init__()
 
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.input_dims = input_dims
+        self.cur_depth = cur_depth
         self.activation = get_activation(activation)
 
         self.upsample = nn.UpsamplingBilinear2d(scale_factor=2)
 
-        self.matcher = BasicCNNBlock(in_channels + 1, out_channels - self.input_dims, norm=norm, activation=activation, padding="same", residual=True)
+        self.matcher = BasicCNNBlock(in_channels, out_channels - self.input_dims, norm=norm, activation=activation, padding="same", residual=True)
         self.mixer = BasicCNNBlock(out_channels, out_channels, norm=norm, activation=activation, padding="same", residual=True)
 
         self.raw_block = BasicCNNBlock(self.input_dims, self.input_dims, norm=norm, activation=activation, padding="same", residual=True)
-        self.attn_block = AttentionBlock(self.in_channels, self.out_channels, self.input_dims, norm=norm, activation=activation, padding="same")
+        self.attn_block = AttentionBlock(self.in_channels, self.out_channels, self.input_dims, self.cur_depth, norm=norm, activation=activation, padding="same")
 
         self.norm1 = get_normalization(norm, in_channels)
         self.norm2 = get_normalization(norm, self.out_channels - self.input_dims)
@@ -134,15 +167,15 @@ class MixerBlock(nn.Module):
     def forward(self,
         x,
         skip,
-        time_emb,
+        previous_attn,
     ): # x is the input, y is the original input resampled
         identity = x
-        x = torch.cat((x, time_emb), dim=1)
+        attn, attn_spatial, attn_channel = self.attn_block(identity, skip, previous_attn)
         x = self.stem(x)
-        x = torch.cat((x, self.attn_block(identity, skip)), dim=1)
+        x = torch.cat((x, attn), dim=1)
         x = self.mixer(x)
 
-        return x
+        return x, attn_spatial, attn_channel
 
 
 class DecoderBlock(nn.Module):
@@ -171,13 +204,11 @@ class DecoderBlock(nn.Module):
 
 class Pyramid(nn.Module):
     """ Pyramid Architecture"""
-    def __init__(self, *, input_size=64, input_dim=10, output_dim=1, depths=None, dims=None, stem_squeeze=1, iterations=3, clamp_output=False, clamp_min=0.0, clamp_max=1.0, activation="relu", norm="batch", padding="same"):
+    def __init__(self, *, input_size=64, input_dim=10, output_dim=1, depths=None, dims=None, stem_squeeze=1, clamp_output=False, clamp_min=0.0, clamp_max=1.0, activation="relu", norm="batch", padding="same"):
         super(Pyramid, self).__init__()
 
         self.depths = np.array([3, 3, 3, 3]) if depths is None else np.array(depths)
         self.dims = np.array([32, 48, 64, 96]) if dims is None else np.array(dims)
-        self.time = (np.arange(iterations) / (iterations - 1)).astype(np.float32)
-        self.iterations = iterations
         self.input_size = input_size
         self.output_dim = output_dim
         self.input_dim = input_dim
@@ -191,12 +222,11 @@ class Pyramid(nn.Module):
 
         assert len(self.depths) == len(self.dims), "depths and dims must have the same length."
 
-        # Could be calculated lazily.
         self.sizes = [self.input_size // (2 ** (i + 1)) for i in reversed(range(len(self.depths)))]
         self.pools = [nn.AdaptiveAvgPool2d(i) for i in self.sizes]
 
         self.stem_size = (self.sizes[0] ** 2) * self.input_dim
-        self.channel_match = BasicCNNBlock(self.input_dim + 1, self.dims[0], norm=self.norm, activation=self.activation, padding=self.padding, residual=True)
+        self.channel_match = BasicCNNBlock(self.input_dim, self.dims[0], norm=self.norm, activation=self.activation, padding=self.padding, residual=True)
         self.activation = get_activation(self.activation)
 
         self.stem = nn.Sequential(
@@ -225,6 +255,7 @@ class Pyramid(nn.Module):
                     self.dims[i] if i == 0 else self.dims[i - 1],
                     self.dims[i],
                     self.input_dim,
+                    i,
                     norm=self.norm,
                     activation=self.activation,
                 )
@@ -240,21 +271,9 @@ class Pyramid(nn.Module):
                     residual=True,
                 )
             )
-            self.squeeze_blocks.append(
-                SE_BlockV3(
-                    self.dims[i],
-                    reduction_c=2,
-                    reduction_s=2 if self.sizes[i] < 16 else self.sizes[i] // 8,
-                    activation=self.activation,
-                    norm=self.norm,
-                    first_layer=False,
-                )
-            )
 
         self.mixer_blocks = nn.ModuleList(self.mixer_blocks)
         self.decoder_blocks = nn.ModuleList(self.decoder_blocks)
-        self.squeeze_blocks = nn.ModuleList(self.squeeze_blocks)
-
 
     def initialize_weights(self, std=0.02):
         for m in self.modules():
@@ -271,30 +290,25 @@ class Pyramid(nn.Module):
     def forward(self, x):
         identity = x
 
-        # Recursion does not benefit the model.
+        x = self.stem(identity)
+        x = x.reshape(x.size(0), self.input_dim, self.sizes[0], self.sizes[0])
+        x = self.channel_match(x)
 
-        pred = torch.Tensor(x.size(0), self.output_dim, self.input_size, self.input_size).zero_().to(x.device)
+        # Pre-calculate the previous attentions instead.
 
-        for j in range(self.iterations):
-            x = self.stem(identity)
-            x = x.reshape(x.size(0), self.input_dim, self.sizes[0], self.sizes[0])
-            time_emb = torch.Tensor(x.size(0), 1, self.sizes[0], self.sizes[0]).fill_(self.time[j]).to(x.device)
-            x = torch.cat((x, time_emb), dim=1)
-            x = self.channel_match(x)
+        previous_attn = []
+        for i in range(len(self.depths)):
+            pool_id = self.pools[i + 1](identity) if i < len(self.depths) - 1 else identity
+            x, attn_spatial, attn_channel = self.mixer_blocks[i](x, pool_id, previous_attn)
+            previous_attn.append((attn_spatial, attn_channel))
+            x = self.decoder_blocks[i](x)
 
-            for i in range(len(self.depths)):
-                pool_id = self.pools[i + 1](identity) if i < len(self.depths) - 1 else identity
-                time_emb = torch.Tensor(x.size(0), 1, x.size(2), x.size(3)).fill_(self.time[j]).to(x.device)
-                x = self.mixer_blocks[i](x, pool_id, time_emb)
-                x = self.decoder_blocks[i](x)
-                x = self.squeeze_blocks[i](x)
-
-            pred += self.head(x)
+        x = self.head(x)
 
         if self.clamp_output:
-            pred = torch.clamp(pred, self.clamp_min, self.clamp_max)
+            x = torch.clamp(x, self.clamp_min, self.clamp_max)
 
-        return pred
+        return x
 
 
 if __name__ == "__main__":
