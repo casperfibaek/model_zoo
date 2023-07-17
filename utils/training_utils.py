@@ -5,27 +5,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-def patience_calculator(epoch, t_0, t_m, max_patience=50):
-    """ Calculate the patience for the scheduler. """
-    if epoch <= t_0:
-        return t_0
-
-    p = [t_0 * t_m ** i for i in range(100) if t_0 * t_m ** i <= epoch][-1]
-    if p > max_patience:
-        return max_patience
-
-    return p
-
-
-class Reshape(nn.Module):
-    def __init__(self, target_shape):
-        super(Reshape, self).__init__()
-        self.target_shape = target_shape
-    
-    def forward(self, x):
-        return x.reshape(*self.target_shape)
-
-
 class TiledMSE(nn.Module):
     """
     Calculates the MSE at full image level and at the pixel level and weights the two.
@@ -315,43 +294,3 @@ def convert_torch_to_float(tensor):
         return float(tensor)
     else:
         raise ValueError("Cannot convert tensor to float")
-
-
-class Conv2dWN(nn.Conv2d):
-    def __init__(self,
-        in_channels,
-        out_channels,
-        kernel_size,
-        stride=1,
-        padding=0,
-        dilation=1,
-        groups=1,
-        bias=True,
-    ):
-        super(Conv2dWN, self).__init__(
-            in_channels,
-            out_channels,
-            kernel_size,
-            stride,
-            padding,
-            dilation,
-            groups,
-            bias,
-        )
-
-    def forward(self, x):
-        weight = self.weight
-        weight_mean = weight.mean(dim=1, keepdim=True).mean(dim=2, keepdim=True).mean(dim=3, keepdim=True)
-        weight = weight - weight_mean
-        std = weight.view(weight.size(0), -1).std(dim=1).view(-1, 1, 1, 1) + 1e-5
-        weight = weight / std.expand_as(weight)
-
-        return F.conv2d(
-            x,
-            weight,
-            bias=self.bias,
-            stride=self.stride,
-            padding=self.padding,
-            dilation=self.dilation,
-            groups=self.groups,
-        )
