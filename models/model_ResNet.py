@@ -46,7 +46,6 @@ class ResNetBlock_V1_5(nn.Module):
 
 
 class ResNetEncoderBlock(nn.Module):
-    """ ResNet Encoder block """
     def __init__(self, depth, in_channels, out_channels):
         super(ResNetEncoderBlock, self).__init__()
 
@@ -77,7 +76,6 @@ class ResNetEncoderBlock(nn.Module):
 
 
 class ResNetDecoderBlock(nn.Module):
-    """ ResNet Decoder block """
     def __init__(self, depth, in_channels, out_channels):
         super(ResNetDecoderBlock, self).__init__()
 
@@ -85,11 +83,6 @@ class ResNetDecoderBlock(nn.Module):
         self.in_channels = in_channels
         self.out_channels = out_channels
 
-        # self.upsample = nn.Sequential(
-        #     nn.ConvTranspose2d(self.in_channels, self.out_channels, kernel_size=2, stride=2),
-        #     nn.BatchNorm2d(self.out_channels),
-        #     nn.ReLU6(),
-        # )
         self.upsample = nn.UpsamplingBilinear2d(scale_factor=2)
 
         self.blocks = []
@@ -110,9 +103,6 @@ class ResNetDecoderBlock(nn.Module):
 
 
 class ResNetUnet(nn.Module):
-    """
-    Basic ResNet Architecture
-    """
     def __init__(self, *, input_dim=10, output_dim=1, depths=None, dims=None, stem_kernel_size=7, clamp_output=False, clamp_min=0.0, clamp_max=1.0):
         super(ResNetUnet, self).__init__()
 
@@ -167,18 +157,6 @@ class ResNetUnet(nn.Module):
             nn.Conv2d(self.dims[0], self.output_dim, kernel_size=3, padding=1),
         )
 
-    def initialize_weights(self):
-        for m in self.modules():
-            if isinstance(m, (nn.Conv2d, nn.ConvTranspose2d, nn.Linear)):
-                nn.init.trunc_normal_(m.weight, std=0.02)
-
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
-
-            elif isinstance(m, nn.BatchNorm2d):
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
-
     def forward(self, x):
         skip_connections = []
         
@@ -203,9 +181,6 @@ class ResNetUnet(nn.Module):
 
 
 class ResNet(nn.Module):
-    """
-    Basic ResNet Architecture
-    """
     def __init__(self, *, input_dim=10, output_dim=1, depths=None, dims=None, stem_kernel_size=7, clamp_output=False, clamp_min=0.0, clamp_max=1.0):
         super(ResNet, self).__init__()
 
@@ -242,18 +217,6 @@ class ResNet(nn.Module):
             nn.Flatten(),
             nn.Linear(self.dims[-1], self.output_dim),
         )
-
-    def initialize_weights(self, std=0.02):
-        for m in self.modules():
-            if isinstance(m, (nn.Conv2d, nn.ConvTranspose2d, nn.Linear)):
-                nn.init.trunc_normal_(m.weight, std=std, a=-2 * std, b=2 * std)
-
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
-
-            elif isinstance(m, nn.BatchNorm2d):
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
 
     def forward(self, x):
         x = self.stem(x)

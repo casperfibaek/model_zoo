@@ -45,9 +45,7 @@ class BasicCNNBlock(nn.Module):
         return x
 
 
-
 class BasicEncoderBlock(nn.Module):
-    """ Encoder block """
     def __init__(self, depth, in_channels, out_channels, norm="batch", activation="relu", padding="same"):
         super(BasicEncoderBlock, self).__init__()
 
@@ -79,7 +77,6 @@ class BasicEncoderBlock(nn.Module):
 
 
 class BasicAttentionBlock(nn.Module):
-    """ Attention block """
     def __init__(self, lower_channels, higher_channels, *, norm="batch", activation="relu", padding="same"):
         super(BasicAttentionBlock, self).__init__()
 
@@ -108,7 +105,6 @@ class BasicAttentionBlock(nn.Module):
 
 
 class BasicDecoderBlock(nn.Module):
-    """ Decoder block """
     def __init__(self, depth, in_channels, out_channels, *, norm="batch", activation="relu", padding="same"):
         super(BasicDecoderBlock, self).__init__()
 
@@ -144,7 +140,6 @@ class BasicDecoderBlock(nn.Module):
 
 
 class BasicUnet(nn.Module):
-    """ Basic Architecture """
     def __init__(self, *, input_dim=10, output_dim=1, depths=None, dims=None, clamp_output=False, clamp_min=0.0, clamp_max=1.0, activation="relu", norm="batch", padding="same"):
         super(BasicUnet, self).__init__()
 
@@ -205,18 +200,6 @@ class BasicUnet(nn.Module):
             nn.Conv2d(self.dims[0], self.output_dim, kernel_size=1, padding=0),
         )
 
-    def initialize_weights(self, std=0.02):
-        for m in self.modules():
-            if isinstance(m, (nn.Conv2d, nn.ConvTranspose2d, nn.Linear)):
-                nn.init.trunc_normal_(m.weight, std=std, a=-2 * std, b=2 * std)
-
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
-
-            elif isinstance(m, nn.BatchNorm2d):
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
-
     def forward(self, x):
         skip_connections = []
         
@@ -241,9 +224,6 @@ class BasicUnet(nn.Module):
 
 
 class Basic(nn.Module):
-    """
-    Basic Architecture
-    """
     def __init__(self, *, input_dim=10, output_dim=1, depths=None, dims=None, clamp_output=False, clamp_min=0.0, clamp_max=1.0, activation="relu", norm="batch", padding="same"):
         super(Basic, self).__init__()
 
@@ -281,18 +261,6 @@ class Basic(nn.Module):
             nn.Flatten(),
             nn.Linear(self.dims[-1], self.output_dim),
         )
-
-    def initialize_weights(self, std=0.02):
-        for m in self.modules():
-            if isinstance(m, (nn.Conv2d, nn.ConvTranspose2d, nn.Linear)):
-                nn.init.trunc_normal_(m.weight, std=std, a=-2 * std, b=2 * std)
-
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
-
-            elif isinstance(m, nn.BatchNorm2d):
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
 
     def forward(self, x):
         x = self.stem(x)

@@ -6,11 +6,6 @@ from utils import LayerNorm, GRN
 
 
 class ConvNextV2Block(nn.Module):
-    """ ConvNeXtV2 Block.
-    
-    Args:
-        dim (int): Number of input channels.
-    """
     def __init__(self, in_channels, out_channels, kernel_size=7):
         super().__init__()
         self.shortcut = nn.Identity()
@@ -44,7 +39,6 @@ class ConvNextV2Block(nn.Module):
 
 
 class ConvNextV2EncoderBlock(nn.Module):
-    """ ConvNext V2 Encoder block """
     def __init__(self, depth, in_channels, out_channels):
         super(ConvNextV2EncoderBlock, self).__init__()
 
@@ -75,7 +69,6 @@ class ConvNextV2EncoderBlock(nn.Module):
 
 
 class ConvNextV2DecoderBlock(nn.Module):
-    """ ConvNext V2 Decoder block """
     def __init__(self, depth, in_channels, out_channels):
         super(ConvNextV2DecoderBlock, self).__init__()
 
@@ -107,9 +100,6 @@ class ConvNextV2DecoderBlock(nn.Module):
 
 
 class ConvNextV2Unet(nn.Module):
-    """
-    Basic ConvNext Architecture
-    """
     def __init__(self, *, input_dim=10, output_dim=1, depths=None, dims=None, stem_kernel_size=7, clamp_output=False, clamp_min=0.0, clamp_max=1.0):
         super(ConvNextV2Unet, self).__init__()
 
@@ -164,18 +154,6 @@ class ConvNextV2Unet(nn.Module):
             nn.Conv2d(self.dims[0], self.output_dim, kernel_size=3, padding=1),
         )
 
-    def initialize_weights(self):
-        for m in self.modules():
-            if isinstance(m, (nn.Conv2d, nn.ConvTranspose2d, nn.Linear)):
-                nn.init.trunc_normal_(m.weight, std=0.02)
-
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
-
-            elif isinstance(m, nn.BatchNorm2d):
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
-
     def forward(self, x):
         skip_connections = []
         
@@ -200,9 +178,6 @@ class ConvNextV2Unet(nn.Module):
 
 
 class ConvNextV2(nn.Module):
-    """
-    Basic ConvNext Architecture
-    """
     def __init__(self, *, input_dim=10, output_dim=1, depths=None, dims=None, stem_kernel_size=7, clamp_output=False, clamp_min=0.0, clamp_max=1.0):
         super(ConvNextV2, self).__init__()
 
@@ -239,18 +214,6 @@ class ConvNextV2(nn.Module):
             nn.Flatten(),
             nn.Linear(self.dims[-1], self.output_dim),
         )
-
-    def initialize_weights(self, std=0.02):
-        for m in self.modules():
-            if isinstance(m, (nn.Conv2d, nn.ConvTranspose2d, nn.Linear)):
-                nn.init.trunc_normal_(m.weight, std=std, a=-2 * std, b=2 * std)
-
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
-
-            elif isinstance(m, nn.BatchNorm2d):
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
 
     def forward(self, x):
         x = self.stem(x)

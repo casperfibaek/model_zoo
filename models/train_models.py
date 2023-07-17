@@ -18,7 +18,8 @@ def train(
     use_wandb: bool = True,
     predict_func=None,
     save_best_model: bool = False,
-    patience=10,
+    patience=20,
+    min_epochs=50,
 ) -> str:
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -56,6 +57,7 @@ def train(
         predict_func=predict_func,
         save_best_model=save_best_model,
         patience=patience,
+        min_epochs=min_epochs,
     )
 
 def predict_func(model, epoch):
@@ -95,25 +97,98 @@ if __name__ == "__main__":
     import warnings; warnings.filterwarnings("ignore", category=UserWarning)
     import buteo as beo
     import numpy as np
-    from model_BasicCNN import BasicUnet_femto, BasicUnet_base
 
-    # torch.autograd.set_detect_anomaly(True)
-
-    NUM_EPOCHS = 50
+    NUM_EPOCHS = 100
+    MIN_EPOCHS = 50
+    PATIENCE = 20
     LEARNING_RATE = 0.001
     BATCH_SIZE = 32
-    NAME = "BasicCNNFemto"
+    NAME = "DiamondNetV01"
 
-    model = BasicUnet_femto(input_dim=10, output_dim=1, clamp_output=True, clamp_min=0.0, clamp_max=100.0, activation="relu")
-    model.initialize_weights(0.05)
+    depths = [3, 3, 3, 3]
+    dims = [32, 48, 64, 80]
+
+    # from model_Diamond import DiamondNet
+    # model = DiamondNet(
+    #     input_dim=10,
+    #     output_dim=1,
+    #     input_size=64,
+    #     depths=depths,
+    #     dims=dims,
+    #     clamp_output=True,
+    #     clamp_min=0.0,
+    #     clamp_max=100.0,
+    #     activation="relu",
+    # )
+
+    # from model_DiamondUnet import DiamondUnet
+    # model = DiamondUnet(
+    #     input_dim=10,
+    #     output_dim=1,
+    #     clamp_output=True,
+    #     depths=depths,
+    #     dims=dims,
+    #     clamp_min=0.0,
+    #     clamp_max=100.0,
+    #     activation="relu",
+    # )
+
+    from model_ResNet import ResNet
+    model = ResNet(
+        input_dim=10,
+        output_dim=1,
+        depths=depths,
+        dims=dims,
+        clamp_output=True,
+        clamp_min=0.0,
+        clamp_max=100.0,
+        activation="relu",
+    )
+
+    # from model_BasicCNN import BasicUnet
+    # model = BasicUnet(
+    #     input_dim=10,
+    #     output_dim=1,
+    #     clamp_output=True,
+    #     depths=depths,
+    #     dims=dims,
+    #     clamp_min=0.0,
+    #     clamp_max=100.0,
+    #     activation="relu",
+    # )
+
+    # from model_SENet import SENet
+    # model = SENet(
+    #     input_dim=10,
+    #     output_dim=1,
+    #     clamp_output=True,
+    #     depths=depths,
+    #     dims=dims,
+    #     clamp_min=0.0,
+    #     clamp_max=100.0,
+    #     activation="relu",
+    # )
+
+    # from model_ConvNextV2 import ConvNextV2
+    # model = ConvNextV2(
+    #     input_dim=10,
+    #     output_dim=1,
+    #     clamp_output=True,
+    #     depths=depths,
+    #     dims=dims,
+    #     clamp_min=0.0,
+    #     clamp_max=100.0,
+    #     activation="relu",
+    # )
 
     train(
         num_epochs=NUM_EPOCHS,
         learning_rate=LEARNING_RATE,
         batch_size=BATCH_SIZE,
+        min_epochs=MIN_EPOCHS,
         model=model,
         name=NAME,
         use_wandb=False,
-        patience=50,
+        patience=PATIENCE,
         # predict_func=predict_func,
     )

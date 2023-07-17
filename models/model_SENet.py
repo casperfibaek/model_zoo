@@ -73,7 +73,7 @@ class SENetEncoderBlock(nn.Module):
         self.downsample = nn.Conv2d(self.out_channels, self.out_channels, kernel_size=2, stride=2)
     
     def forward(self, x):
-        before_downsample = x
+        before_downsample = x # This should be after the blocks.
         for i in range(self.depth):
             x = self.blocks[i](x)
 
@@ -93,11 +93,6 @@ class SENetDecoderBlock(nn.Module):
         self.activation = activation
 
         self.upsample = nn.UpsamplingBilinear2d(scale_factor=2)
-        # self.upsample = nn.Sequential(
-        #     nn.ConvTranspose2d(self.in_channels, self.out_channels, kernel_size=2, stride=2),
-        #     nn.BatchNorm2d(self.out_channels),
-        #     get_activation(self.activation),
-        # )
 
         self.blocks = []
         for _ in range(self.depth):

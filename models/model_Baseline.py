@@ -5,7 +5,6 @@ from utils import get_activation, get_normalization
 
 
 class BaselineNet(nn.Module):
-    """ Basic Architecture """
     def __init__(self, *, input_dim=10, output_dim=1, clamp_output=False, clamp_min=0.0, clamp_max=1.0, activation="relu", norm="batch", padding="same"):
         super(BaselineNet, self).__init__()
 

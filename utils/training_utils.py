@@ -53,7 +53,7 @@ class LayerNorm(nn.Module):
     shape (batch_size, height, width, channels) while channels_first corresponds to inputs 
     with shape (batch_size, channels, height, width).
     """
-    def __init__(self, normalized_shape, eps=1e-6, data_format="channels_last"):
+    def __init__(self, normalized_shape, eps=1e-6, data_format="channels_first"):
         super().__init__()
         self.weight = nn.Parameter(torch.ones(normalized_shape))
         self.bias = nn.Parameter(torch.zeros(normalized_shape))
@@ -282,6 +282,22 @@ def get_normalization(normalization_name, num_channels, num_groups=32, dims=2):
         return LayerNorm(num_channels)
     elif normalization_name == "group":
         return nn.GroupNorm(num_groups=num_groups, num_channels=num_channels)
+    elif normalization_name == "bcn":
+        if dims == 1:
+            return nn.Sequential(
+                nn.BatchNorm1d(num_channels),
+                nn.GroupNorm(1, num_channels)
+            )
+        elif dims == 2:
+            return nn.Sequential(
+                nn.BatchNorm2d(num_channels),
+                nn.GroupNorm(1, num_channels)
+            )
+        elif dims == 3:
+            return nn.Sequential(
+                nn.BatchNorm3d(num_channels),
+                nn.GroupNorm(1, num_channels)
+            )    
     elif normalization_name == "none":
         return nn.Identity()
     else:
@@ -299,3 +315,43 @@ def convert_torch_to_float(tensor):
         return float(tensor)
     else:
         raise ValueError("Cannot convert tensor to float")
+
+
+class Conv2dWN(nn.Conv2d):
+    def __init__(self,
+        in_channels,
+        out_channels,
+        kernel_size,
+        stride=1,
+        padding=0,
+        dilation=1,
+        groups=1,
+        bias=True,
+    ):
+        super(Conv2dWN, self).__init__(
+            in_channels,
+            out_channels,
+            kernel_size,
+            stride,
+            padding,
+            dilation,
+            groups,
+            bias,
+        )
+
+    def forward(self, x):
+        weight = self.weight
+        weight_mean = weight.mean(dim=1, keepdim=True).mean(dim=2, keepdim=True).mean(dim=3, keepdim=True)
+        weight = weight - weight_mean
+        std = weight.view(weight.size(0), -1).std(dim=1).view(-1, 1, 1, 1) + 1e-5
+        weight = weight / std.expand_as(weight)
+
+        return F.conv2d(
+            x,
+            weight,
+            bias=self.bias,
+            stride=self.stride,
+            padding=self.padding,
+            dilation=self.dilation,
+            groups=self.groups,
+        )
