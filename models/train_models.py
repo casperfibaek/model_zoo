@@ -133,29 +133,28 @@ if __name__ == "__main__":
     #     activation="relu",
     # )
 
-    from model_ResNet import ResNet
-    model = ResNet(
+    # from model_ResNet import ResNet
+    # model = ResNet(
+    #     input_dim=10,
+    #     output_dim=1,
+    #     depths=depths,
+    #     dims=dims,
+    #     clamp_output=True,
+    #     clamp_min=0.0,
+    #     clamp_max=100.0,
+    # )
+
+    from model_CoreCNN import CoreUnet
+    model = CoreUnet(
         input_dim=10,
         output_dim=1,
+        clamp_output=True,
         depths=depths,
         dims=dims,
-        clamp_output=True,
         clamp_min=0.0,
         clamp_max=100.0,
         activation="relu",
     )
-
-    # from model_BasicCNN import BasicUnet
-    # model = BasicUnet(
-    #     input_dim=10,
-    #     output_dim=1,
-    #     clamp_output=True,
-    #     depths=depths,
-    #     dims=dims,
-    #     clamp_min=0.0,
-    #     clamp_max=100.0,
-    #     activation="relu",
-    # )
 
     # from model_SENet import SENet
     # model = SENet(
@@ -178,7 +177,6 @@ if __name__ == "__main__":
     #     dims=dims,
     #     clamp_min=0.0,
     #     clamp_max=100.0,
-    #     activation="relu",
     # )
 
     train(

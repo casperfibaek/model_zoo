@@ -78,7 +78,7 @@ def training_loop(
     )
 
     # Loss and optimizer
-    optimizer = torch.optim.AdamW(model.parameters())
+    optimizer = torch.optim.AdamW(model.parameters(), eps=1e-7)
     scaler = GradScaler()
 
     # Save the initial learning rate in optimizer's param_groups

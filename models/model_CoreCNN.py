@@ -1,18 +1,19 @@
 import sys; sys.path.append("../")
 import torch
 import torch.nn as nn
-from utils import get_activation, get_normalization
+from utils import get_activation, get_normalization, SE_Block
 
 
-class BasicCNNBlock(nn.Module):
+class CoreCNNBlock(nn.Module):
     def __init__(self, in_channels, out_channels, *, norm="batch", activation="relu", padding="same", residual=True):
-        super(BasicCNNBlock, self).__init__()
+        super(CoreCNNBlock, self).__init__()
 
         self.activation = get_activation(activation)
         self.residual = residual
         self.padding = padding
         self.in_channels = in_channels
         self.out_channels = out_channels
+        self.squeeze = SE_Block(self.out_channels)
 
         self.match_channels = nn.Identity()
         if in_channels != out_channels:
@@ -37,6 +38,8 @@ class BasicCNNBlock(nn.Module):
         x = self.activation(self.norm2(self.conv2(x)))
         x = self.norm3(self.conv3(x))
 
+        x = x * self.squeeze(x)
+
         if self.residual:
             x = x + self.match_channels(identity)
 
@@ -44,10 +47,9 @@ class BasicCNNBlock(nn.Module):
 
         return x
 
-
-class BasicEncoderBlock(nn.Module):
+class CoreEncoderBlock(nn.Module):
     def __init__(self, depth, in_channels, out_channels, norm="batch", activation="relu", padding="same"):
-        super(BasicEncoderBlock, self).__init__()
+        super(CoreEncoderBlock, self).__init__()
 
         self.depth = depth
         self.in_channels = in_channels
@@ -59,7 +61,7 @@ class BasicEncoderBlock(nn.Module):
         self.blocks = []
         for i in range(self.depth):
             _in_channels = self.in_channels if i == 0 else self.out_channels
-            block = BasicCNNBlock(_in_channels, self.out_channels, norm=self.norm, activation=self.activation, padding=self.padding)
+            block = CoreCNNBlock(_in_channels, self.out_channels, norm=self.norm, activation=self.activation, padding=self.padding)
 
             self.blocks.append(block)
 
@@ -67,46 +69,69 @@ class BasicEncoderBlock(nn.Module):
         self.downsample = nn.MaxPool2d(kernel_size=2, stride=2)
     
     def forward(self, x):
-        before_downsample = x
         for i in range(self.depth):
             x = self.blocks[i](x)
 
+        before_downsample = x
         x = self.downsample(x)
 
         return x, before_downsample
 
 
-class BasicAttentionBlock(nn.Module):
-    def __init__(self, lower_channels, higher_channels, *, norm="batch", activation="relu", padding="same"):
-        super(BasicAttentionBlock, self).__init__()
+class CoreAttentionBlock(nn.Module):
+    def __init__(self,
+        lower_channels,
+        higher_channels, *,
+        norm="batch",
+        activation="relu",
+        padding="same",
+    ):
+        super(CoreAttentionBlock, self).__init__()
 
         self.lower_channels = lower_channels
         self.higher_channels = higher_channels
         self.activation = get_activation(activation)
         self.norm = norm
         self.padding = padding
+        self.expansion = 4
+        self.reduction = 4
 
-        self.match = nn.Sequential(
-            nn.Conv2d(self.higher_channels, self.lower_channels, kernel_size=1, padding=0, bias=False),
-            get_normalization(self.norm, self.lower_channels),
-            self.activation,
-        )
-        self.compress = nn.Conv2d(self.lower_channels, 1, kernel_size=1, padding=0, bias=False)
+        if self.lower_channels != self.higher_channels:
+            self.match = nn.Sequential(
+                nn.Conv2d(self.higher_channels, self.lower_channels, kernel_size=1, padding=0, bias=False),
+                get_normalization(self.norm, self.lower_channels),
+            )
+
+        self.compress = nn.Conv2d(self.lower_channels, 1, kernel_size=1, padding=0)
         self.sigmoid = nn.Sigmoid()
 
+        self.attn_c_pool = nn.AdaptiveAvgPool2d(self.reduction)
+        self.attn_c_reduction = nn.Linear(self.lower_channels * (self.reduction ** 2), self.lower_channels * self.expansion)
+        self.attn_c_extention = nn.Linear(self.lower_channels * self.expansion, self.lower_channels)
+
     def forward(self, x, skip):
-        x = self.match(x)
+        if x.size(1) != skip.size(1):
+            x = self.match(x)
         x = x + skip
         x = self.activation(x)
-        x = self.compress(x)
-        x = self.sigmoid(x)
-        
-        return x
+
+        attn_spatial = self.compress(x)
+        attn_spatial = self.sigmoid(attn_spatial)
+
+        attn_channel = self.attn_c_pool(x)
+        attn_channel = attn_channel.reshape(attn_channel.size(0), -1)
+        attn_channel = self.attn_c_reduction(attn_channel)
+        attn_channel = self.activation(attn_channel)
+        attn_channel = self.attn_c_extention(attn_channel)
+        attn_channel = attn_channel.reshape(x.size(0), x.size(1), 1, 1)
+        attn_channel = self.sigmoid(attn_channel)
+
+        return attn_spatial, attn_channel
 
 
-class BasicDecoderBlock(nn.Module):
+class CoreDecoderBlock(nn.Module):
     def __init__(self, depth, in_channels, out_channels, *, norm="batch", activation="relu", padding="same"):
-        super(BasicDecoderBlock, self).__init__()
+        super(CoreDecoderBlock, self).__init__()
 
         self.depth = depth
         self.in_channels = in_channels
@@ -117,20 +142,20 @@ class BasicDecoderBlock(nn.Module):
         self.padding = padding
 
         self.upsample = nn.UpsamplingBilinear2d(scale_factor=2)
-        self.match_channels = BasicCNNBlock(self.in_channels + self.out_channels, self.out_channels, norm=self.norm, activation=self.activation_blocks, padding=self.padding)
-        self.attention = BasicAttentionBlock(self.out_channels, self.in_channels, norm=self.norm, activation=self.activation_blocks, padding=self.padding)
+        self.match_channels = CoreCNNBlock(self.in_channels * 2, self.out_channels, norm=self.norm, activation=self.activation_blocks, padding=self.padding)
+        self.attention = CoreAttentionBlock(self.in_channels, self.in_channels, norm=self.norm, activation=self.activation_blocks, padding=self.padding)
 
         self.blocks = []
         for _ in range(self.depth):
-            block = BasicCNNBlock(self.out_channels, self.out_channels, norm=self.norm, activation=self.activation_blocks, padding=self.padding)
+            block = CoreCNNBlock(self.out_channels, self.out_channels, norm=self.norm, activation=self.activation_blocks, padding=self.padding)
             self.blocks.append(block)
 
         self.blocks = nn.Sequential(*self.blocks)
     
     def forward(self, x, skip): # y is the skip connection
         x = self.upsample(x)
-        attn = self.attention(x, skip)
-        x = torch.cat([x, skip * attn], dim=1)
+        attn_s, attn_c = self.attention(x, skip)
+        x = torch.cat([x, (skip * attn_s) + (skip + attn_c)], dim=1)
         x = self.match_channels(x)
 
         for i in range(self.depth):
@@ -139,9 +164,9 @@ class BasicDecoderBlock(nn.Module):
         return x
 
 
-class BasicUnet(nn.Module):
+class CoreUnet(nn.Module):
     def __init__(self, *, input_dim=10, output_dim=1, depths=None, dims=None, clamp_output=False, clamp_min=0.0, clamp_max=1.0, activation="relu", norm="batch", padding="same"):
-        super(BasicUnet, self).__init__()
+        super(CoreUnet, self).__init__()
 
         self.depths = [3, 3, 9, 3] if depths is None else depths
         self.dims = [96, 192, 384, 768] if dims is None else dims
@@ -159,12 +184,12 @@ class BasicUnet(nn.Module):
         assert len(self.depths) == len(self.dims), "depths and dims must have the same length."
 
         self.stem = nn.Sequential(
-            BasicCNNBlock(self.input_dim, self.dims[0], norm=self.norm, activation=self.activation, padding=self.padding),
+            CoreCNNBlock(self.input_dim, self.dims[0], norm=self.norm, activation=self.activation, padding=self.padding),
         )
 
         self.encoder_blocks = []
         for i in range(len(self.depths)):
-            encoder_block = BasicEncoderBlock(
+            encoder_block = CoreEncoderBlock(
                 self.depths[i],
                 self.dims[i - 1] if i > 0 else self.dims[0],
                 self.dims[i],
@@ -179,7 +204,7 @@ class BasicUnet(nn.Module):
         self.decoder_blocks = []
 
         for i in reversed(range(len(self.encoder_blocks))):
-            decoder_block = BasicDecoderBlock(
+            decoder_block = CoreDecoderBlock(
                 self.depths[i],
                 self.dims[i],
                 self.dims[i - 1] if i > 0 else self.dims[0],
@@ -192,11 +217,11 @@ class BasicUnet(nn.Module):
         self.decoder_blocks = nn.ModuleList(self.decoder_blocks)
 
         self.bridge = nn.Sequential(
-            BasicCNNBlock(self.dims[-1], self.dims[-1], norm=self.norm, activation=self.activation, padding=self.padding),
+            CoreCNNBlock(self.dims[-1], self.dims[-1], norm=self.norm, activation=self.activation, padding=self.padding),
         )
         
         self.head = nn.Sequential(
-            BasicCNNBlock(self.dims[0], self.dims[0], norm=self.norm, activation=self.activation, padding=self.padding),
+            CoreCNNBlock(self.dims[0], self.dims[0], norm=self.norm, activation=self.activation, padding=self.padding),
             nn.Conv2d(self.dims[0], self.output_dim, kernel_size=1, padding=0),
         )
 
@@ -223,9 +248,9 @@ class BasicUnet(nn.Module):
 
 
 
-class Basic(nn.Module):
+class CoreEncoder(nn.Module):
     def __init__(self, *, input_dim=10, output_dim=1, depths=None, dims=None, clamp_output=False, clamp_min=0.0, clamp_max=1.0, activation="relu", norm="batch", padding="same"):
-        super(Basic, self).__init__()
+        super(CoreEncoder, self).__init__()
 
         self.depths = [3, 3, 9, 3] if depths is None else depths
         self.dims = [96, 192, 384, 768] if dims is None else dims
@@ -240,11 +265,11 @@ class Basic(nn.Module):
 
         assert len(self.depths) == len(self.dims), "depths and dims must have the same length."
 
-        self.stem = BasicCNNBlock(self.input_dim, self.dims[0], norm=self.norm, activation=self.activation, padding=self.padding)
+        self.stem = CoreCNNBlock(self.input_dim, self.dims[0], norm=self.norm, activation=self.activation, padding=self.padding)
 
         self.encoder_blocks = []
         for i in range(len(self.depths)):
-            encoder_block = BasicEncoderBlock(
+            encoder_block = CoreEncoderBlock(
                 self.depths[i],
                 self.dims[i - 1] if i > 0 else self.dims[0],
                 self.dims[i],
@@ -275,68 +300,68 @@ class Basic(nn.Module):
 
         return x
 
-def BasicUnet_atto(**kwargs):
-    model = BasicUnet(depths=[2, 2, 6, 2], dims=[40, 80, 160, 320], **kwargs)
+def CoreUnet_atto(**kwargs):
+    model = CoreUnet(depths=[2, 2, 6, 2], dims=[40, 80, 160, 320], **kwargs)
     return model
 
-def BasicUnet_femto(**kwargs):
-    model = BasicUnet(depths=[2, 2, 6, 2], dims=[48, 96, 192, 384], **kwargs)
+def CoreUnet_femto(**kwargs):
+    model = CoreUnet(depths=[2, 2, 6, 2], dims=[48, 96, 192, 384], **kwargs)
     return model
 
-def BasicUnet_pico(**kwargs):
-    model = BasicUnet(depths=[2, 2, 6, 2], dims=[64, 128, 256, 512], **kwargs)
+def CoreUnet_pico(**kwargs):
+    model = CoreUnet(depths=[2, 2, 6, 2], dims=[64, 128, 256, 512], **kwargs)
     return model
 
-def BasicUnet_nano(**kwargs):
-    model = BasicUnet(depths=[2, 2, 8, 2], dims=[80, 160, 320, 640], **kwargs)
+def CoreUnet_nano(**kwargs):
+    model = CoreUnet(depths=[2, 2, 8, 2], dims=[80, 160, 320, 640], **kwargs)
     return model
 
-def BasicUnet_tiny(**kwargs):
-    model = BasicUnet(depths=[3, 3, 9, 3], dims=[96, 192, 384, 768], **kwargs)
+def CoreUnet_tiny(**kwargs):
+    model = CoreUnet(depths=[3, 3, 9, 3], dims=[96, 192, 384, 768], **kwargs)
     return model
 
-def BasicUnet_base(**kwargs):
-    model = BasicUnet(depths=[3, 3, 27, 3], dims=[128, 256, 512, 1024], **kwargs)
+def CoreUnet_base(**kwargs):
+    model = CoreUnet(depths=[3, 3, 27, 3], dims=[128, 256, 512, 1024], **kwargs)
     return model
 
-def BasicUnet_large(**kwargs):
-    model = BasicUnet(depths=[3, 3, 27, 3], dims=[192, 384, 768, 1536], **kwargs)
+def CoreUnet_large(**kwargs):
+    model = CoreUnet(depths=[3, 3, 27, 3], dims=[192, 384, 768, 1536], **kwargs)
     return model
 
-def BasicUnet_huge(**kwargs):
-    model = BasicUnet(depths=[3, 3, 27, 3], dims=[352, 704, 1408, 2816], **kwargs)
+def CoreUnet_huge(**kwargs):
+    model = CoreUnet(depths=[3, 3, 27, 3], dims=[352, 704, 1408, 2816], **kwargs)
     return model
 
-def Basic_atto(**kwargs):
-    model = Basic(depths=[2, 2, 6, 2], dims=[40, 80, 160, 320], **kwargs)
+def Core_atto(**kwargs):
+    model = CoreEncoder(depths=[2, 2, 6, 2], dims=[40, 80, 160, 320], **kwargs)
     return model
 
-def Basic_femto(**kwargs):
-    model = Basic(depths=[2, 2, 6, 2], dims=[48, 96, 192, 384], **kwargs)
+def Core_femto(**kwargs):
+    model = CoreEncoder(depths=[2, 2, 6, 2], dims=[48, 96, 192, 384], **kwargs)
     return model
 
-def Basic_pico(**kwargs):
-    model = Basic(depths=[2, 2, 6, 2], dims=[64, 128, 256, 512], **kwargs)
+def Core_pico(**kwargs):
+    model = CoreEncoder(depths=[2, 2, 6, 2], dims=[64, 128, 256, 512], **kwargs)
     return model
 
-def Basic_nano(**kwargs):
-    model = Basic(depths=[2, 2, 8, 2], dims=[80, 160, 320, 640], **kwargs)
+def Core_nano(**kwargs):
+    model = CoreEncoder(depths=[2, 2, 8, 2], dims=[80, 160, 320, 640], **kwargs)
     return model
 
-def Basic_tiny(**kwargs):
-    model = Basic(depths=[3, 3, 9, 3], dims=[96, 192, 384, 768], **kwargs)
+def Core_tiny(**kwargs):
+    model = CoreEncoder(depths=[3, 3, 9, 3], dims=[96, 192, 384, 768], **kwargs)
     return model
 
-def Basic_base(**kwargs):
-    model = Basic(depths=[3, 3, 27, 3], dims=[128, 256, 512, 1024], **kwargs)
+def Core_base(**kwargs):
+    model = CoreEncoder(depths=[3, 3, 27, 3], dims=[128, 256, 512, 1024], **kwargs)
     return model
 
-def Basic_large(**kwargs):
-    model = Basic(depths=[3, 3, 27, 3], dims=[192, 384, 768, 1536], **kwargs)
+def Core_large(**kwargs):
+    model = CoreEncoder(depths=[3, 3, 27, 3], dims=[192, 384, 768, 1536], **kwargs)
     return model
 
-def Basic_huge(**kwargs):
-    model = Basic(depths=[3, 3, 27, 3], dims=[352, 704, 1408, 2816], **kwargs)
+def Core_huge(**kwargs):
+    model = CoreEncoder(depths=[3, 3, 27, 3], dims=[352, 704, 1408, 2816], **kwargs)
     return model
 
 
@@ -349,7 +374,7 @@ if __name__ == "__main__":
     HEIGHT = 64
     WIDTH = 64
 
-    model = BasicUnet_femto(
+    model = CoreUnet_femto(
         input_dim=10,
         output_dim=1,
     )

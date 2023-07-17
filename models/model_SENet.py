@@ -51,7 +51,6 @@ class SENetBLock(nn.Module):
 
 
 class SENetEncoderBlock(nn.Module):
-    """ SENet Encoder block """
     def __init__(self, depth, in_channels, out_channels, activation="gelu"):
         super(SENetEncoderBlock, self).__init__()
 
@@ -83,7 +82,6 @@ class SENetEncoderBlock(nn.Module):
 
 
 class SENetDecoderBlock(nn.Module):
-    """ SENet Decoder block """
     def __init__(self, depth, in_channels, out_channels, activation="gelu"):
         super(SENetDecoderBlock, self).__init__()
 
@@ -112,9 +110,6 @@ class SENetDecoderBlock(nn.Module):
 
 
 class SENetUnet(nn.Module):
-    """
-    Basic SENet Architecture
-    """
     def __init__(self, *, input_dim=10, output_dim=1, depths=None, dims=None, stem_kernel_size=7, clamp_output=False, clamp_min=0.0, clamp_max=1.0, activation="gelu"):
         super(SENetUnet, self).__init__()
 
@@ -173,18 +168,6 @@ class SENetUnet(nn.Module):
             nn.Conv2d(self.dims[0], self.output_dim, kernel_size=3, padding=1),
         )
 
-    def initialize_weights(self, std=0.02):
-        for m in self.modules():
-            if isinstance(m, (nn.Conv2d, nn.ConvTranspose2d, nn.Linear)):
-                nn.init.trunc_normal_(m.weight, std=std, a=-2 * std, b=2 * std)
-
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
-
-            elif isinstance(m, nn.BatchNorm2d):
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
-
     def forward(self, x):
         identity = x
         skip_connections = []
@@ -216,9 +199,6 @@ class SENetUnet(nn.Module):
 
 
 class SENet(nn.Module):
-    """
-    Basic SENet Architecture
-    """
     def __init__(self, *, input_dim=10, output_dim=1, depths=None, dims=None, stem_kernel_size=7, clamp_output=False, clamp_min=0.0, clamp_max=1.0, activation="gelu"):
         super(SENet, self).__init__()
 
