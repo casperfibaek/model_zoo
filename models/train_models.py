@@ -102,7 +102,7 @@ if __name__ == "__main__":
     MIN_EPOCHS = 50
     PATIENCE = 20
     LEARNING_RATE = 0.001
-    BATCH_SIZE = 32
+    BATCH_SIZE = 16
     NAME = "DiamondNetV01"
 
     depths = [3, 3, 3, 3]
@@ -144,17 +144,17 @@ if __name__ == "__main__":
     #     clamp_max=100.0,
     # )
 
-    from model_CoreCNN import CoreUnet
-    model = CoreUnet(
-        input_dim=10,
-        output_dim=1,
-        clamp_output=True,
-        depths=depths,
-        dims=dims,
-        clamp_min=0.0,
-        clamp_max=100.0,
-        activation="relu",
-    )
+    # from model_CoreCNN import CoreUnet
+    # model = CoreUnet(
+    #     input_dim=10,
+    #     output_dim=1,
+    #     clamp_output=True,
+    #     depths=depths,
+    #     dims=dims,
+    #     clamp_min=0.0,
+    #     clamp_max=100.0,
+    #     activation="relu",
+    # )
 
     # from model_SENet import SENet
     # model = SENet(
@@ -178,6 +178,15 @@ if __name__ == "__main__":
     #     clamp_min=0.0,
     #     clamp_max=100.0,
     # )
+
+    from model_vit import ViT
+    model = ViT(
+        bchw=(BATCH_SIZE, 10, 64, 64),
+        output_dim=1,
+        patch_size=16,
+        n_blocks=5,
+        n_heads=16,
+    )
 
     train(
         num_epochs=NUM_EPOCHS,

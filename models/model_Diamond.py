@@ -4,6 +4,9 @@ import torch.nn as nn
 from utils import get_activation, get_normalization
 
 
+# TODO: Change norm to layer norm
+# TODO: Split attention and forward connection
+
 
 class CNNBlock(nn.Module):
     def __init__(self,

@@ -5,7 +5,6 @@ from glob import glob
 # External Libraries
 import buteo as beo
 import numpy as np
-from numba import njit
 
 # PyTorch
 import torch
