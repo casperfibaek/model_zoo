@@ -41,7 +41,7 @@ def train(
         learning_rate=learning_rate,
         learning_rate_end=learning_rate_end,
         model=model,
-        criterion=TiledMSE(0.5),
+        criterion=TiledMSE(0.2),
         device=device,
         metrics=[
             mse.to(device),
@@ -100,10 +100,11 @@ if __name__ == "__main__":
 
     NUM_EPOCHS = 100
     MIN_EPOCHS = 50
+    WARMUP_EPOCHS = 10
     PATIENCE = 20
-    LEARNING_RATE = 0.001
+    LEARNING_RATE = 0.0001
     BATCH_SIZE = 16
-    NAME = "DiamondNetV01"
+    NAME = "ViT03"
 
     depths = [3, 3, 3, 3]
     dims = [32, 48, 64, 80]
@@ -121,8 +122,8 @@ if __name__ == "__main__":
     #     activation="relu",
     # )
 
-    # from model_DiamondUnet import DiamondUnet
-    # model = DiamondUnet(
+    # from model_Diamond import DiamondNet
+    # model = DiamondNet(
     #     input_dim=10,
     #     output_dim=1,
     #     clamp_output=True,
@@ -183,19 +184,31 @@ if __name__ == "__main__":
     model = ViT(
         bchw=(BATCH_SIZE, 10, 64, 64),
         output_dim=1,
-        patch_size=16,
-        n_blocks=5,
+        patch_size=4,
+        embed_dim=1024,
+        n_layers=5,
         n_heads=16,
     )
+
+    # from model_vit_base import Vit_ae
+    # model = Vit_ae(
+    #     chw=(10, 64, 64),
+    #     out_chans=1,
+    #     patch_size=16,
+    #     embed_dim=512,
+    #     depth=3,
+    #     num_heads=16,
+    # )
 
     train(
         num_epochs=NUM_EPOCHS,
         learning_rate=LEARNING_RATE,
         batch_size=BATCH_SIZE,
         min_epochs=MIN_EPOCHS,
+        warmup_epochs=WARMUP_EPOCHS,
         model=model,
         name=NAME,
         use_wandb=False,
         patience=PATIENCE,
-        # predict_func=predict_func,
+        predict_func=predict_func,
     )

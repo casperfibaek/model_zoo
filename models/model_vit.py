@@ -2,7 +2,7 @@ import numpy as np
 
 import torch
 import torch.nn as nn
-from torch.nn import functional as F
+from timm.models.vision_transformer import Block, PatchEmbed
 import buteo as beo
 import os
 
@@ -26,7 +26,8 @@ def patchify_batch(images, patch_size=16):
 
 def unpatchify_batch(patches, shape, patch_size):
     """ Unpatchify without loops and copies. """
-    batch_size, channels, height, width = shape
+    _, channels, height, width = shape
+    batch_size, _n_patches, _ = patches.shape
     
     patches = patches.reshape(batch_size, height // patch_size, width // patch_size, patch_size, patch_size, channels)
     patches = patches.swapaxes(2, 3)
@@ -36,80 +37,67 @@ def unpatchify_batch(patches, shape, patch_size):
     return patches
 
 
-def get_positional_embeddings(sequence_length, d):
-    result = torch.ones(sequence_length, d)
-    for i in range(sequence_length):
-        for j in range(d):
-            if j % 2 == 0:
-                result[i][j] = np.sin(i / (10000 ** (j / d)))
-            else:
-                result[i][j] = np.cos(i / (10000 ** ((j - 1) / d)))
-
-    return result
-
-
 class ViT(nn.Module):
     def __init__(self,
         bchw=(32, 10, 64, 64),
         output_dim=1,
         patch_size=16,
-        n_blocks=2,
-        hidden_d=512,
+        embed_dim=512,
+        n_layers=2,
         n_heads=8,
     ):
         super(ViT, self).__init__()
         self.bchw = bchw
         self.patch_size = patch_size
         self.n_patches  = bchw[2] // patch_size
-        self.embed_dim = hidden_d
+        self.embed_dim = embed_dim
         self.n_heads = n_heads
-        self.n_layers = n_blocks
+        self.n_layers = n_layers
         self.output_dim = output_dim
+
+        torch.set_default_device("cuda" if torch.cuda.is_available() else "cpu")
 
         assert bchw[2] % patch_size == 0, "Image size must be divisible by the patch size."
         assert bchw[3] == bchw[2], "Image must be square."
-        assert hidden_d % n_heads == 0, "Hidden dimension must be divisible by the number of heads."
+        assert embed_dim % n_heads == 0, "Hidden dimension must be divisible by the number of heads."
 
-        # self.projection_conv = nn.Conv2d(bchw[1], self.embed_dim, kernel_size=self.patch_size, stride=self.patch_size)
-        self.projection = nn.Linear(patch_size * patch_size * bchw[1], self.embed_dim)
-        # self.position_embedding = nn.Parameter(torch.randn(1, self.n_patches ** 2, self.embed_dim))
-        self.position_embedding = nn.Parameter(torch.tensor(get_positional_embeddings(self.n_patches ** 2, self.embed_dim)))
+        self.patch_embed = PatchEmbed(img_size=bchw[2], patch_size=patch_size, in_chans=bchw[1], embed_dim=embed_dim)
+        self.position_embedding = nn.Parameter(torch.randn(1, (self.n_patches ** 2) + 1, embed_dim) * .02)
+        self.class_token = nn.Parameter(torch.randn(1, 1, self.embed_dim))
 
-        encoder_norm = nn.LayerNorm(self.embed_dim)
-        encoder_layer = nn.TransformerEncoderLayer(d_model=self.embed_dim, nhead=self.n_heads)
-        self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=self.n_layers, norm=encoder_norm)
-        
+        self.blocks = [Block(embed_dim, n_heads) for _ in range(self.n_layers)]
+
         self.output = nn.Linear(self.embed_dim, bchw[1] * patch_size * patch_size)
-        self.output_conv = nn.Conv2d(bchw[1], self.output_dim, kernel_size=1)
-     
+        
+        self.output_conv = nn.Sequential(
+            nn.Conv2d(bchw[1], bchw[1], kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.BatchNorm2d(bchw[1]),
+            nn.Conv2d(bchw[1], self.output_dim, kernel_size=1),
+        )
 
     def forward(self, x):
-        # Apply the linear transformation to each patch
-        x = patchify_batch(x, self.patch_size)
+        x = self.patch_embed(x)
 
-        # Apply linear transformation to each patch
-        x = torch.cat([self.projection(p) for p in x.split(1, dim=1)], dim=1)
-
-        # # Apply convolution to project patches
-        # x = self.projection_conv(x)
-
-        # # Reshape x to fit the expected shape of the transformer encoder
-        # b, d, h, w = x.size()
-        # x = x.permute(0, 2, 3, 1) # Rearrange dimensions
-        # x = x.reshape(b, h * w, d)
+        # Add class token
+        x = torch.cat([self.class_token.repeat(x.shape[0], 1, 1), x], dim=1)
 
         # Add Positional Embeddings
         x = x + self.position_embedding
 
         # Pass through Transformer Encoder
-        x = self.transformer_encoder(x)
+        for block in self.blocks:
+            x = block(x)
 
         # Return to the orignal shape
         x = self.output(x)
+        x = x[:, 1:, :] # Remove class token
         x = unpatchify_batch(x, self.bchw, self.patch_size)
 
         # Collapse dimensions
         x = self.output_conv(x)
+
+        x = torch.clamp(x, 0.0, 100.0)
 
         return x
 
@@ -127,5 +115,3 @@ if __name__ == "__main__":
 
     model = ViT(bchw=batch.shape, patch_size=PATCH_SIZE)
     output = model(batch)
-
-    import pdb; pdb.set_trace()

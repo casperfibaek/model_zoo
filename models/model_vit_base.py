@@ -1,265 +1,241 @@
-import numpy as np
-
+# --------------------------------------------------------
+# References:
+# MAE: https://github.com/facebookresearch/mae
+# timm: https://github.com/rwightman/pytorch-image-models/tree/master/timm
+# DeiT: https://github.com/facebookresearch/deit
+# --------------------------------------------------------
 import torch
 import torch.nn as nn
-from torch.nn import functional as F
+import numpy as np
+
+from timm.models.vision_transformer import PatchEmbed, Block
 
 
-def patchify(images, n_patches):
-    n, c, h, w = images.shape
-    device = images.device
+def get_2d_sincos_pos_embed(embed_dim, grid_size, cls_token=False):
+    """
+    grid_size: int of the grid height and width
+    return:
+    pos_embed: [grid_size*grid_size, embed_dim] or [1+grid_size*grid_size, embed_dim] (w/ or w/o cls_token)
+    """
+    grid_h = np.arange(grid_size, dtype=np.float32)
+    grid_w = np.arange(grid_size, dtype=np.float32)
+    grid = np.meshgrid(grid_w, grid_h)  # here w goes first
+    grid = np.stack(grid, axis=0)
 
-    patches = torch.zeros(n, n_patches ** 2, h * w * c // n_patches ** 2).to(device)
-    patch_size = h // n_patches
+    grid = grid.reshape([2, 1, grid_size, grid_size])
+    pos_embed = get_2d_sincos_pos_embed_from_grid(embed_dim, grid)
+    if cls_token:
+        pos_embed = np.concatenate([np.zeros([1, embed_dim]), pos_embed], axis=0)
+    return pos_embed
 
-    for idx, image in enumerate(images):
-        for i in range(n_patches):
-            for j in range(n_patches):
-                patch = image[:, i * patch_size: (i + 1) * patch_size, j * patch_size: (j + 1) * patch_size]
-                patches[idx, i * n_patches + j] = patch.flatten()
+
+def get_2d_sincos_pos_embed_from_grid(embed_dim, grid):
+    assert embed_dim % 2 == 0
+
+    # use half of dimensions to encode grid_h
+    emb_h = get_1d_sincos_pos_embed_from_grid(embed_dim // 2, grid[0])  # (H*W, D/2)
+    emb_w = get_1d_sincos_pos_embed_from_grid(embed_dim // 2, grid[1])  # (H*W, D/2)
+
+    emb = np.concatenate([emb_h, emb_w], axis=1) # (H*W, D)
+    return emb
+
+
+def get_1d_sincos_pos_embed_from_grid(embed_dim, pos):
+    """
+    embed_dim: output dimension for each position
+    pos: a list of positions to be encoded: size (M,)
+    out: (M, D)
+    """
+    assert embed_dim % 2 == 0
+    omega = np.arange(embed_dim // 2, dtype=np.float32)
+    omega /= embed_dim / 2.
+    omega = 1. / 10000**omega  # (D/2,)
+
+    pos = pos.reshape(-1)  # (M,)
+    out = np.einsum('m,d->md', pos, omega)  # (M, D/2), outer product
+
+    emb_sin = np.sin(out) # (M, D/2)
+    emb_cos = np.cos(out) # (M, D/2)
+
+    emb = np.concatenate([emb_sin, emb_cos], axis=1)  # (M, D)
+    return emb
+
+
+def unpatchify_batch(patches, chw, patch_size):
+    """ Unpatchify without loops and copies. """
+    channels, height, width = chw
+    batch_size, _n_patches, _ = patches.shape
+    
+    patches = patches.reshape(batch_size, height // patch_size, width // patch_size, patch_size, patch_size, channels)
+    patches = patches.swapaxes(2, 3)
+    patches = patches.reshape(batch_size, height, width, channels)
+    patches = patches.swapaxes(1, -1)
 
     return patches
 
 
-def unpatchify(n, c, h, w, n_patches, tensors):
-    device = tensors.device
-    images = torch.zeros(n, c, h, w).to(device)
-    patch_size = h // n_patches
+class ViT_backbone(nn.Module):
+    """VisionTransformer backbone
+    """
+    def __init__(self, chw:tuple=(10, 64, 64), patch_size:int=16,
+                 embed_dim:int=768, depth:int=3, num_heads:int=16,
+                 mlp_ratio:float=4., norm_layer:nn.Module=nn.LayerNorm):
+        super().__init__()
 
-    for idx, tensor in enumerate(tensors):
-        patch_idx = 0
-        for i in range(n_patches):
-            for j in range(n_patches):
-                patch = tensor[patch_idx].unflatten(dim=0, sizes=(c, patch_size, patch_size))
-                images[idx, :, i * patch_size: (i + 1) * patch_size, j * patch_size: (j + 1) * patch_size] = patch
-                patch_idx = patch_idx + 1
-    
-    return images
+        # Attributes
+        self.chw = chw  # (C, H, W)
+        self.in_c = chw[0]
+        self.img_size = chw[1]
+        self.emded_dim = embed_dim
 
+        self.patch_embed = PatchEmbed(self.img_size, patch_size, self.in_c, embed_dim)
+        self.num_patches = self.patch_embed.num_patches
 
-def get_positional_embeddings(sequence_length, d):
-    result = torch.ones(sequence_length, d)
-    for i in range(sequence_length):
-        for j in range(d):
-            if j % 2 == 0:
-                result[i][j] = np.sin(i / (10000 ** (j / d)))
-            else:
-                result[i][j] = np.cos(i / (10000 ** ((j - 1) / d)))
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
+        self.pos_embed = nn.Parameter(torch.zeros(1, self.num_patches + 1, embed_dim), requires_grad=False)  # fixed sin-cos embedding
 
-    return result
+        self.blocks = nn.ModuleList([
+            Block(embed_dim, num_heads, mlp_ratio, qkv_bias=True, norm_layer=norm_layer)
+            for _ in range(depth)])
+        self.norm = norm_layer(embed_dim)
+        self.initialize_weights()
 
+    def initialize_weights(self):
+        # initialization
+        # initialize (and freeze) pos_embed by sin-cos embedding
+        pos_embed = get_2d_sincos_pos_embed(self.pos_embed.shape[-1], int(self.patch_embed.num_patches**.5), cls_token=True)
+        self.pos_embed.data.copy_(torch.from_numpy(pos_embed).float().unsqueeze(0))
 
-class MyMSA(nn.Module):
-    def __init__(self, d, n_heads=2):
-        super(MyMSA, self).__init__()
-        self.d = d
-        self.n_heads = n_heads
+        # initialize patch_embed like nn.Linear (instead of nn.Conv2d)
+        w = self.patch_embed.proj.weight.data
+        torch.nn.init.xavier_uniform_(w.view([w.shape[0], -1]))
 
-        assert d % n_heads == 0, f"Can't divide dimension {d} into {n_heads} heads"
+        # timm's trunc_normal_(std=.02) is effectively normal_(std=0.02) as cutoff is too big (2.)
+        torch.nn.init.normal_(self.cls_token, std=.02)
 
-        d_head = int(d / n_heads)
-        self.q_mappings = nn.ModuleList([nn.Linear(d_head, d_head) for _ in range(self.n_heads)])
-        self.k_mappings = nn.ModuleList([nn.Linear(d_head, d_head) for _ in range(self.n_heads)])
-        self.v_mappings = nn.ModuleList([nn.Linear(d_head, d_head) for _ in range(self.n_heads)])
-        self.d_head = d_head
-        self.softmax = nn.Softmax(dim=-1)
+        # initialize nn.Linear and nn.LayerNorm
+        self.apply(self._init_weights)
 
-    def forward(self, sequences):
-        # Sequences has shape (N, seq_length, token_dim)
-        # We go into shape    (N, seq_length, n_heads, token_dim / n_heads)
-        # And come back to    (N, seq_length, item_dim)  (through concatenation)
-        result = []
-        for sequence in sequences:
-            seq_result = []
-            for head in range(self.n_heads):
-                q_mapping = self.q_mappings[head]
-                k_mapping = self.k_mappings[head]
-                v_mapping = self.v_mappings[head]
-
-                # splits patch image features into (n, d_head) inputs (one for each head)
-                seq = sequence[:, head * self.d_head: (head + 1) * self.d_head]
-                q, k, v = q_mapping(seq), k_mapping(seq), v_mapping(seq)
-
-                attention = self.softmax(q @ k.T / (self.d_head ** 0.5)) # @ is matrix multiplication
-                seq_result.append(attention @ v)
-
-            result.append(torch.hstack(seq_result))
-
-        return torch.cat([torch.unsqueeze(r, dim=0) for r in result])
-
-
-class MyViTBlock(nn.Module):
-    def __init__(self, hidden_d, n_heads, mlp_ratio=4):
-        super(MyViTBlock, self).__init__()
-        self.hidden_d = hidden_d
-        self.n_heads = n_heads
-
-        self.norm1 = nn.LayerNorm(hidden_d)
-        self.mhsa = MyMSA(hidden_d, n_heads)
-        self.norm2 = nn.LayerNorm(hidden_d)
-        self.mlp = nn.Sequential(
-            nn.Linear(hidden_d, mlp_ratio * hidden_d),
-            nn.GELU(),
-            nn.Linear(mlp_ratio * hidden_d, hidden_d)
-        )
+    def _init_weights(self, m):
+        if isinstance(m, nn.Linear):
+            # we use xavier_uniform following official JAX ViT:
+            torch.nn.init.xavier_uniform_(m.weight)
+            if isinstance(m, nn.Linear) and m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.LayerNorm):
+            nn.init.constant_(m.bias, 0)
+            nn.init.constant_(m.weight, 1.0)
 
     def forward(self, x):
-        out = x + self.mhsa(self.norm1(x))
-        out = out + self.mlp(self.norm2(out))
+        # embed patches
+        x = self.patch_embed(x)
 
-        return out
+        # add pos embed w/o cls token
+        x = x + self.pos_embed[:, 1:, :]
 
+        # append cls token
+        cls_token = self.cls_token + self.pos_embed[:, :1, :]
+        cls_tokens = cls_token.expand(x.shape[0], -1, -1)
+        x = torch.cat((cls_tokens, x), dim=1)
 
-class MyViT(nn.Module):
-  def __init__(self, chw=(9, 128, 128), n_patches=8, n_blocks=2, hidden_d=1024, n_heads=2):
-      # Super constructor
-      super(MyViT, self).__init__()
-
-      # Attributes
-      self.chw = chw # (C, H, W)
-      self.n_patches = n_patches
-      self.n_blocks = n_blocks
-      self.n_heads = n_heads
-      self.hidden_d = hidden_d
-      self.norm_layer = nn.LayerNorm(hidden_d)
-
-      assert chw[1] % n_patches == 0, "Input shape not entirely divisible by number of patches"
-      assert chw[2] % n_patches == 0, "Input shape not entirely divisible by number of patches"
-      self.patch_size = (chw[1] / n_patches, chw[2] / n_patches)
-
-      # 1) Linear mapper
-      self.input_d = int(chw[0] * self.patch_size[0] * self.patch_size[1])
-      self.linear_mapper = nn.Linear(self.input_d, self.hidden_d)
-
-      # 2) Learnable classifiation token
-      self.class_token = nn.Parameter(torch.rand(1, self.hidden_d))
-
-      # 3) Positional embedding
-      self.pos_embed = nn.Parameter(torch.tensor(get_positional_embeddings(self.n_patches ** 2 + 1,
-                                                                           self.hidden_d)))
-      self.pos_embed.requires_grad = False
-
-      # 4) Transformer encoder blocks
-      self.blocks = nn.ModuleList([MyViTBlock(hidden_d, n_heads) for _ in range(n_blocks)])
-
-  def forward(self, images):
-      patches = patchify(images, self.n_patches)
-      tokens = self.linear_mapper(patches)
-
-      # Adding classification token to the tokens # more efficent way to do it?
-      # classification token is put as the first token of each sequence
-      tokens = torch.stack([torch.vstack((self.class_token, tokens[i])) for i in range(len(tokens))])
-
-      # Adding positional embedding
-      pos_embed = self.pos_embed.repeat(tokens.shape[0], 1, 1)
-      out = tokens + pos_embed
-
-      # Transformer Blocks
-      for block in self.blocks:
-          out = block(out)
-
-      out = self.norm_layer(out)
-      return out
-
-class MyViT_decoder(nn.Module):
-  def __init__(self, input_d, n_patches=8, n_blocks=2, hidden_d=1024, n_heads=2):
-      # Super constructor
-      super(MyViT_decoder, self).__init__()
-
-      # Attributes
-      self.input_d = input_d
-      self.hidden_d = hidden_d
-      self.n_patches = n_patches
-      self.n_blocks = n_blocks
-      self.n_heads = n_heads
-      self.norm_layer = nn.LayerNorm(self.hidden_d)
-
-
-      # 1) Linear mapper
-      self.linear_mapper = nn.Linear(self.input_d, self.hidden_d)
-
-      # 3) Positional embedding
-      self.pos_embed = nn.Parameter(torch.tensor(get_positional_embeddings(self.n_patches ** 2 + 1,
-                                                                           self.hidden_d)))
-      self.pos_embed.requires_grad = False
-
-      # 4) Transformer encoder blocks
-      self.blocks = nn.ModuleList([MyViTBlock(self.hidden_d, n_heads) for _ in range(n_blocks)])
-
-  def forward(self, x):
-      tokens = self.linear_mapper(x)
-
-      # Adding positional embedding
-      pos_embed = self.pos_embed.repeat(tokens.shape[0], 1, 1)
-      out = tokens + pos_embed
-
-      # Transformer Blocks
-      for block in self.blocks:
-          out = block(out)
-
-      out = self.norm_layer(out)
-      # remove classification token put as the first token of each sequence
-      out = out[:, 1:, :]
-      return out
-
-class ViT(nn.Module):
-    def __init__(self, chw=(10, 64, 64), n_patches=4, n_blocks=2, hidden_d=768, n_heads=12, clamp_output=True, clamp_output_min=0.0, clamp_output_max=1.0):
-        # Super constructor
-        super(ViT, self).__init__()
-        self.chw = chw
-        self.n_patches = n_patches
-        self.clamp_output = clamp_output
-        self.clamp_output_min = clamp_output_min
-        self.clamp_output_max = clamp_output_max
-        patch_size = (chw[1] / n_patches, chw[2] / n_patches)
-
-        self.vit_encoder = MyViT(chw, n_patches, n_blocks, hidden_d, n_heads)
-        self.decoder_pred = nn.Linear(hidden_d, int(1 * patch_size[0] ** 2), bias=True)
-
-    def forward(self, x):
-        x = self.vit_encoder(x)
-        x = x[:, 1:, :]
-        x = self.decoder_pred(x)
-
-        if self.clamp_output:
-            x = torch.clamp(x, self.clamp_output_min, self.clamp_output_max)
+        # apply Transformer blocks
+        for blk in self.blocks:
+            x = blk(x)
+        x = self.norm(x)
 
         return x
 
-class autoencoderViT(nn.Module):
+class ViT_decoder(ViT_backbone):
+    """ Autoencoder with VisionTransformer backbone
+    """
+    def __init__(self, chw:tuple=(10, 64, 64), out_chans:int=1, patch_size:int=16, input_embed_dim:int=768,
+                 embed_dim:int=512,  depth:int=3, num_heads:int=16,
+                 mlp_ratio:float=4., norm_layer:nn.Module=nn.LayerNorm):
 
-    def __init__(self, chw=(10, 128, 128), n_patches=8, n_blocks=2, hidden_d=768, n_heads=12,
-                 decoder_n_blocks=2, decoder_hidden_d=512, decoder_n_heads=16, clamp_output=True, clamp_output_min=0.0, clamp_output_max=1.0):
-        # Super constructor
-        super(autoencoderViT, self).__init__()
+        super().__init__(chw=chw, patch_size=patch_size,
+                         embed_dim=embed_dim, depth=depth, num_heads=num_heads, mlp_ratio=mlp_ratio,
+                         norm_layer=norm_layer)
+
+
+        self.decoder_embed = nn.Linear(input_embed_dim, self.emded_dim, bias=True)
+        self.decoder_pred = nn.Linear(self.emded_dim, patch_size ** 2 * out_chans, bias=True)  # dec
+        self.initialize_weights()
+
+    def forward(self, x):
+        # embed tokens
+        x = self.decoder_embed(x)
+
+        # add pos embed
+        x = x + self.pos_embed
+
+        # apply Transformer blocks
+        for blk in self.blocks:
+            x = blk(x)
+        x = self.norm(x)
+
+        # predictor projection
+        x = self.decoder_pred(x)
+
+        # remove cls token
+        x = x[:, 1:, :]
+
+        return x
+
+
+
+class Vit_ae(nn.Module):
+    def __init__(self, chw:tuple=(10, 64, 64), out_chans:int=1, patch_size:int=16,
+                 embed_dim:int=512, depth:int=3, num_heads:int=16,
+                 mlp_ratio:float=4., norm_layer:nn.Module=nn.LayerNorm,
+                 decoder_embed_dim:int=128, decoder_depth:int=8, decoder_num_heads:int=16,
+                 ):
+        super().__init__()
+        self.patch_size = patch_size
+        self.embed_dim = embed_dim
         self.chw = chw
-        self.n_patches = n_patches
-        self.clamp_output = clamp_output
-        self.clamp_output_min = clamp_output_min
-        self.clamp_output_max = clamp_output_max
-        patch_size = (chw[1] / n_patches, chw[2] / n_patches)
 
-        self.vit_encoder = MyViT(chw, n_patches, n_blocks, hidden_d, n_heads)
-        self.vit_decoder = MyViT_decoder(input_d=hidden_d, n_patches=n_patches, n_blocks=decoder_n_blocks, hidden_d=decoder_hidden_d, n_heads=decoder_n_heads)
-        self.decoder_pred = nn.Linear(decoder_hidden_d, int(1 * patch_size[0] ** 2), bias=True)  # decoder to patch
+        self.vit_encoder = ViT_backbone(chw, patch_size, embed_dim, depth, num_heads, mlp_ratio, norm_layer)
 
+        self.vit_decoder = ViT_decoder(chw, out_chans, patch_size,  input_embed_dim=embed_dim, embed_dim=decoder_embed_dim,
+                                       depth=decoder_depth, num_heads=decoder_num_heads, mlp_ratio=mlp_ratio,
+                                       norm_layer=norm_layer)
+        
+        self.output = nn.Linear(embed_dim, chw[0] * (patch_size ** 2))
+        
+        self.output_conv = nn.Sequential(
+            nn.Conv2d(chw[0], chw[0], kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.BatchNorm2d(chw[0]),
+            nn.Conv2d(chw[0], out_chans, kernel_size=1),
+        )
 
     def forward(self, x):
         x = self.vit_encoder(x)
         x = self.vit_decoder(x)
-        x = self.decoder_pred(x)
 
-        if self.clamp_output:
-            x = torch.clamp(x, self.clamp_output_min, self.clamp_output_max)
+        x = x.reshape(x.shape[0], self.chw[0], self.patch_size, self.patch_size)
+
+
+        yy = self.output(x)
+        yy = unpatchify_batch(x, self.chw, self.patch_size)
+
 
         return x
 
-class vit_mse_losses(nn.Module):
-    def __init__(self, n_patches=8) -> None:
+class Vit_basic(nn.Module):
+    def __init__(self, chw:tuple=(10, 64, 64), out_chans:int=1, patch_size:int=16,
+                 embed_dim:int=512, depth:int=1, num_heads:int=16,
+                 mlp_ratio:float=4., norm_layer:nn.Module=nn.LayerNorm):
         super().__init__()
-        self.n_patches = n_patches
 
-    def forward(self, input: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-        target = patchify(target, n_patches=self.n_patches)
+        self.vit_encoder = ViT_backbone(chw, patch_size, embed_dim, depth, num_heads, mlp_ratio, norm_layer)
+        # decoder to patch
+        self.decoder_pred = nn.Linear(embed_dim, int(out_chans * patch_size ** 2), bias=True)
 
-        return F.mse_loss(input, target, reduction='mean')
+    def forward(self, x):
+        x = self.vit_encoder(x)
+        x = self.decoder_pred(x)
+        # remove cls token
+        x = x[:, 1:, :]
+
+        return x
