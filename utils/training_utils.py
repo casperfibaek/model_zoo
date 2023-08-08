@@ -30,6 +30,34 @@ class TiledMSE(nn.Module):
         return weighted 
 
 
+def drop_path(x, keep_prob = 1.0, inplace = False):
+    mask_shape = (x.shape[0],) + (1,) * (x.ndim - 1) 
+    mask = x.new_empty(mask_shape).bernoulli_(keep_prob)
+    mask.div_(keep_prob)
+
+    if inplace:
+        x.mul_(mask)
+    else:
+        x = x * mask
+
+    return x
+
+
+class DropPath(nn.Module):
+    def __init__(self, p = 0.5, inplace = False):
+        super().__init__()
+        self.p = p
+        self.inplace = inplace
+
+    def forward(self, x):
+        if self.training and self.p > 0:
+            x = drop_path(x, self.p, self.inplace)
+        return x
+
+    def __repr__(self):
+        return f"{self.__class__.__name__}(p={self.p})"
+
+
 class LayerNorm(nn.Module):
     """ LayerNorm that supports two data formats: channels_last (default) or channels_first. 
     The ordering of the dimensions in the inputs. channels_last corresponds to inputs with 

@@ -37,6 +37,7 @@ class MLPMixer(nn.Module):
         self.patch_size = patch_size
         self.output_dim = output_dim
         self.chw = chw
+        self.std = .02
         self.num_patches = (chw[1] // patch_size) * (chw[2] // patch_size)
 
         self.projection = nn.Linear(chw[0] * (patch_size ** 2), dim)
@@ -45,6 +46,19 @@ class MLPMixer(nn.Module):
             MLPMixerLayer(dim, self.num_patches, embed_dim) for _ in range(depth)
         ])
         self.decoder = nn.Linear(dim, int(output_dim * (patch_size ** 2)), bias=True)
+
+        self.apply(self._init_weights)
+
+    def _init_weights(self, m):
+        if isinstance(m, nn.Linear):
+            std = self.std
+            torch.nn.init.trunc_normal_(m.weight, std=std, a=-std * 2, b=std * 2)
+            if isinstance(m, nn.Linear) and m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+
+        elif isinstance(m, nn.LayerNorm):
+            nn.init.constant_(m.bias, 0)
+            nn.init.constant_(m.weight, 1.0)
 
     def patchify_batch(self, images):
         patch_size = self.patch_size
@@ -88,7 +102,6 @@ class MLPMixer(nn.Module):
         x = torch.clamp(x, 0.0, 100.0)
         
         return x
-    
 
 
 if __name__ == "__main__":
@@ -102,8 +115,8 @@ if __name__ == "__main__":
     model = MLPMixer(
         chw=(CHANNELS, HEIGHT, WIDTH),
         output_dim=1,
-        patch_size=4,
-        embed_dim=2048,
+        patch_size=2,
+        embed_dim=1024,
         dim=512,
         depth=6,
     )
