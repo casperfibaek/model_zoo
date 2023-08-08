@@ -46,8 +46,9 @@ class ViT(nn.Module):
             nn.init.constant_(m.bias, 0)
             nn.init.constant_(m.weight, 1.0)
 
-    def unpatchify_batch(self, patches, shape, patch_size):
-        channels, height, width = shape
+    def unpatchify_batch(self, patches):
+        channels, height, width = self.chw
+        patch_size = self.patch_size
         batch_size, _n_patches, _ = patches.shape
         
         patches = patches.reshape(batch_size, height // patch_size, width // patch_size, patch_size, patch_size, channels)
@@ -57,24 +58,22 @@ class ViT(nn.Module):
 
         return patches
     
-    def patchify_batch(self, images, patch_size=16):
-        batch_size, channels, height, width = images.shape
-
-        n_patches_y = height // patch_size
-        n_patches_x = width // patch_size
-        n_patches = n_patches_y * n_patches_x
+    def patchify_batch(self, images):
+        patch_size = self.patch_size
+        batch_size, channels, _height, _width = images.shape
+        num_patches = self.num_patches
 
         channel_last = images.swapaxes(1, -1)
-        reshaped = channel_last.reshape(batch_size, n_patches_y, patch_size, n_patches_x, patch_size, channels)
+        reshaped = channel_last.reshape(batch_size, num_patches, patch_size, num_patches, patch_size, channels)
         swaped = reshaped.swapaxes(2, 3)
         blocks = swaped.reshape(batch_size, -1, patch_size, patch_size, channels)
-        patches = blocks.reshape(batch_size, n_patches, -1)
+        patches = blocks.reshape(batch_size, num_patches, -1)
 
         return patches
 
     def forward(self, x):
         # Patch embedding and pinear projection
-        x = self.projection(self.patchify_batch(x, self.patch_size))
+        x = self.projection(self.patchify_batch(x))
 
         # Add positional embedding without class token
         x = x + self.pos_embed[:, 1:, :]
@@ -90,9 +89,10 @@ class ViT(nn.Module):
         # Return to original shape
         x = self.decoder(self.norm(x))
 
-        x = x[:, 1:, :] # remove cls token
+        # Remove cls token
+        x = x[:, 1:, :]
 
-        x = self.unpatchify_batch(x, (self.output_dim, self.chw[1], self.chw[2]), self.patch_size)
-        x= torch.clamp(x, 0.0, 100.0)
+        x = self.unpatchify_batch(x)
+        x = torch.clamp(x, 0.0, 100.0)
 
         return x
