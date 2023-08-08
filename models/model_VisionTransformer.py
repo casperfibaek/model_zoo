@@ -101,11 +101,6 @@ class ViT(nn.Module):
 
         return x
 
-# Early stopping triggered after 73 epochs.
-# Finished Training. Best epoch:  53
-
-# Starting Testing... (Best val epoch).
-# Test Accuracy: 91.7334
 
 if __name__ == "__main__":
     from torchinfo import summary
