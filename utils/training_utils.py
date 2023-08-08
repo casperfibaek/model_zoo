@@ -10,11 +10,15 @@ class TiledMSE(nn.Module):
     Calculates the MSE at full image level and at the pixel level and weights the two.
     result = (sum_mse * (1 - bias)) + (mse * bias)
     """
-    def __init__(self, bias=0.2):
+    def __init__(self, bias=0.2, scale_term=1.0):
         super(TiledMSE, self).__init__()
         self.bias = bias
+        self.scale_term = scale_term
 
     def forward(self, y_pred, y_true):
+        y_true = (y_true + 1) * self.scale_term
+        y_pred = (y_pred + 1) * self.scale_term
+
         y_pred_sum = torch.sum(y_pred, dim=(1, 2, 3)) / (y_pred.shape[1] * y_pred.shape[2] * y_pred.shape[3])
         y_true_sum = torch.sum(y_true, dim=(1, 2, 3)) / (y_true.shape[1] * y_true.shape[2] * y_true.shape[3])
 
@@ -24,8 +28,8 @@ class TiledMSE(nn.Module):
         weighted = (sum_mse * (1 - self.bias)) + (mse * self.bias)
         
         return weighted 
-    
-           
+
+
 class LayerNorm(nn.Module):
     """ LayerNorm that supports two data formats: channels_last (default) or channels_first. 
     The ordering of the dimensions in the inputs. channels_last corresponds to inputs with 

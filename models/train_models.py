@@ -41,7 +41,8 @@ def train(
         learning_rate=learning_rate,
         learning_rate_end=learning_rate_end,
         model=model,
-        criterion=TiledMSE(0.2),
+        # criterion=TiledMSE(0.2),
+        criterion=nn.MSELoss(),
         device=device,
         metrics=[
             mse.to(device),
@@ -104,7 +105,7 @@ if __name__ == "__main__":
     PATIENCE = 20
     LEARNING_RATE = 0.0001
     BATCH_SIZE = 16
-    NAME = "ViT03"
+    NAME = "VIT04"
 
     depths = [3, 3, 3, 3]
     dims = [32, 48, 64, 80]
@@ -180,25 +181,25 @@ if __name__ == "__main__":
     #     clamp_max=100.0,
     # )
 
+    # from model_vit import ViT
+    # model = ViT(
+    #     bchw=(BATCH_SIZE, 10, 64, 64),
+    #     output_dim=1,
+    #     patch_size=4,
+    #     embed_dim=1024,
+    #     n_layers=5,
+    #     n_heads=16,
+    # )
+
     from model_vit import ViT
     model = ViT(
-        bchw=(BATCH_SIZE, 10, 64, 64),
+        chw=(10, 64, 64),
         output_dim=1,
         patch_size=4,
-        embed_dim=1024,
-        n_layers=5,
-        n_heads=16,
+        embed_dim=768,
+        depth=3,
+        num_heads=16,
     )
-
-    # from model_vit_base import Vit_ae
-    # model = Vit_ae(
-    #     chw=(10, 64, 64),
-    #     out_chans=1,
-    #     patch_size=16,
-    #     embed_dim=512,
-    #     depth=3,
-    #     num_heads=16,
-    # )
 
     train(
         num_epochs=NUM_EPOCHS,
