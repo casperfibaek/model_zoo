@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 
+# UPDATE: https://github.com/ziyuwwang/DynaMixer/tree/main/models
 
 class MLPMixerLayer(nn.Module):
     def __init__(self, dim, num_patches, hidden_dim):

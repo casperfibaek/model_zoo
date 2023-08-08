@@ -105,7 +105,7 @@ if __name__ == "__main__":
     PATIENCE = 20
     LEARNING_RATE = 0.0001
     BATCH_SIZE = 16
-    NAME = "MIX02"
+    NAME = "MIX03"
 
     depths = [3, 3, 3, 3]
     dims = [32, 48, 64, 80]
@@ -205,10 +205,10 @@ if __name__ == "__main__":
     model = MLPMixer(
         chw=(10, 64, 64),
         output_dim=1,
-        patch_size=8,
+        patch_size=4,
         embed_dim=2048,
         dim=512,
-        depth=8,
+        depth=6,
     )
 
     train(
