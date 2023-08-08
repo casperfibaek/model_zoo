@@ -105,7 +105,7 @@ if __name__ == "__main__":
     PATIENCE = 20
     LEARNING_RATE = 0.0001
     BATCH_SIZE = 16
-    NAME = "VIT04"
+    NAME = "MIX02"
 
     depths = [3, 3, 3, 3]
     dims = [32, 48, 64, 80]
@@ -191,14 +191,24 @@ if __name__ == "__main__":
     #     n_heads=16,
     # )
 
-    from model_vit import ViT
-    model = ViT(
+    # from model_vit import ViT
+    # model = ViT(
+    #     chw=(10, 64, 64),
+    #     output_dim=1,
+    #     patch_size=8,
+    #     embed_dim=768,
+    #     depth=3,
+    #     num_heads=16,
+    # )
+
+    from model_MixerMLP import MLPMixer
+    model = MLPMixer(
         chw=(10, 64, 64),
         output_dim=1,
-        patch_size=4,
-        embed_dim=768,
-        depth=3,
-        num_heads=16,
+        patch_size=8,
+        embed_dim=2048,
+        dim=512,
+        depth=8,
     )
 
     train(

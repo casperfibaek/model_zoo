@@ -5,7 +5,7 @@ from timm.models.vision_transformer import Block
 
 
 class ViT(nn.Module):
-    """ VisionTransformer """
+    """ Basic VisionTransformer """
     def __init__(self,
         chw:tuple=(10, 64, 64),
         output_dim:int=1,
@@ -24,15 +24,15 @@ class ViT(nn.Module):
         self.output_dim = output_dim
         self.num_patches = (chw[1] // patch_size) * (chw[2] // patch_size)
 
-        self.projection = nn.Linear(patch_size * patch_size * chw[0], embed_dim)
-
         self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim)); torch.nn.init.normal_(self.cls_token, std=.02)
         self.pos_embed = nn.Parameter(torch.zeros(1, self.num_patches + 1, embed_dim))
 
+        self.projection = nn.Linear(patch_size * patch_size * chw[0], embed_dim)
         self.blocks = nn.ModuleList([
             Block(embed_dim, num_heads, mlp_ratio, qkv_bias=True, norm_layer=norm_layer) for _ in range(depth)
         ])
         self.decoder = nn.Linear(embed_dim, int(output_dim * (patch_size ** 2)), bias=True)
+
         self.norm = norm_layer(embed_dim)
         self.apply(self._init_weights)
 
@@ -47,7 +47,8 @@ class ViT(nn.Module):
             nn.init.constant_(m.weight, 1.0)
 
     def unpatchify_batch(self, patches):
-        channels, height, width = self.chw
+        _, height, width = self.chw
+        channels = self.output_dim
         patch_size = self.patch_size
         batch_size, _n_patches, _ = patches.shape
         
@@ -60,19 +61,22 @@ class ViT(nn.Module):
     
     def patchify_batch(self, images):
         patch_size = self.patch_size
-        batch_size, channels, _height, _width = images.shape
-        num_patches = self.num_patches
+        batch_size, channels, height, width = images.shape
+
+        n_patches_y = height // patch_size
+        n_patches_x = width // patch_size
+        n_patches = n_patches_y * n_patches_x
 
         channel_last = images.swapaxes(1, -1)
-        reshaped = channel_last.reshape(batch_size, num_patches, patch_size, num_patches, patch_size, channels)
+        reshaped = channel_last.reshape(batch_size, n_patches_y, patch_size, n_patches_x, patch_size, channels)
         swaped = reshaped.swapaxes(2, 3)
         blocks = swaped.reshape(batch_size, -1, patch_size, patch_size, channels)
-        patches = blocks.reshape(batch_size, num_patches, -1)
+        patches = blocks.reshape(batch_size, n_patches, -1)
 
         return patches
 
     def forward(self, x):
-        # Patch embedding and pinear projection
+        # Patch embedding and linear projection
         x = self.projection(self.patchify_batch(x))
 
         # Add positional embedding without class token
@@ -96,3 +100,32 @@ class ViT(nn.Module):
         x = torch.clamp(x, 0.0, 100.0)
 
         return x
+
+# Early stopping triggered after 73 epochs.
+# Finished Training. Best epoch:  53
+
+# Starting Testing... (Best val epoch).
+# Test Accuracy: 91.7334
+
+if __name__ == "__main__":
+    from torchinfo import summary
+
+    BATCH_SIZE = 32
+    CHANNELS = 10
+    HEIGHT = 64
+    WIDTH = 64
+
+    model = ViT(
+        chw=(CHANNELS, HEIGHT, WIDTH),
+        output_dim=1,
+        patch_size=8,
+        embed_dim=768,
+        depth=3,
+        num_heads=16,
+    )
+    model(torch.randn((BATCH_SIZE, CHANNELS, HEIGHT, WIDTH)))
+
+    summary(
+        model,
+        input_size=(BATCH_SIZE, CHANNELS, HEIGHT, WIDTH),
+    )
