@@ -2,31 +2,46 @@ import torch
 import torch.nn as nn
 
 
+class StarReLU(nn.Module):
+    def __init__(self, scale_value=1.0, bias_value=0.0, scale_learnable=True, bias_learnable=True, inplace=False):
+        super().__init__()
+        self.inplace = inplace
+        self.relu = nn.ReLU(inplace=inplace)
+        self.scale = nn.Parameter(scale_value * torch.ones(1), requires_grad=scale_learnable)
+        self.bias = nn.Parameter(bias_value * torch.ones(1), requires_grad=bias_learnable)
+
+    def forward(self, x):
+        return (self.scale * (self.relu(x) ** 2)) + self.bias
+
+
 class MLPMixerLayer(nn.Module):
-    def __init__(self, dim, num_patches, hidden_dim):
+    def __init__(self, dim, num_patches, hidden_dim, drop=0.2):
         super(MLPMixerLayer, self).__init__()
         
         self.norm1 = nn.LayerNorm(dim)
         self.channel_mlp = nn.Sequential(
             nn.Linear(dim, hidden_dim),
-            nn.GELU(),
+            StarReLU(),
             nn.Linear(hidden_dim, dim)
         )
         
         self.norm2 = nn.LayerNorm(num_patches)
         self.token_mlp = nn.Sequential(
             nn.Linear(num_patches, hidden_dim),
-            nn.GELU(),
+            StarReLU(),
             nn.Linear(hidden_dim, num_patches)
         )
+
+        self.dropout1 = nn.Dropout(drop) if drop > 0. else nn.Identity()
+        self.dropout2 = nn.Dropout(drop) if drop > 0. else nn.Identity()
         
     def forward(self, x):
         out = self.norm1(x)
-        out = out + self.channel_mlp(out)
+        out = out + self.dropout1(self.channel_mlp(out))
         out = out.transpose(1, 2)
 
         out = self.norm2(out)
-        out = out + self.token_mlp(out)
+        out = out + self.dropout2(self.token_mlp(out))
         out = out.transpose(1, 2)
         
         return out
@@ -115,7 +130,7 @@ if __name__ == "__main__":
     model = MLPMixer(
         chw=(CHANNELS, HEIGHT, WIDTH),
         output_dim=1,
-        patch_size=2,
+        patch_size=8,
         embed_dim=1024,
         dim=512,
         depth=6,

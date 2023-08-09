@@ -290,7 +290,8 @@ def get_normalization(normalization_name, num_channels, num_groups=32, dims=2):
         elif dims == 3:
             return nn.InstanceNorm3d(num_channels)
     elif normalization_name == "layer":
-        return LayerNorm(num_channels)
+        # return LayerNorm(num_channels)
+        return nn.LayerNorm(num_channels)
     elif normalization_name == "group":
         return nn.GroupNorm(num_groups=num_groups, num_channels=num_channels)
     elif normalization_name == "bcn":

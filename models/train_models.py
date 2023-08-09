@@ -103,9 +103,9 @@ if __name__ == "__main__":
     MIN_EPOCHS = 50
     WARMUP_EPOCHS = 10
     PATIENCE = 20
-    LEARNING_RATE = 0.0001
+    LEARNING_RATE = 0.001
     BATCH_SIZE = 16
-    NAME = "MIX04"
+    NAME = "DIAFORMER04"
 
     depths = [3, 3, 3, 3]
     dims = [32, 48, 64, 80]
@@ -120,19 +120,6 @@ if __name__ == "__main__":
     #     clamp_output=True,
     #     clamp_min=0.0,
     #     clamp_max=100.0,
-    #     activation="relu",
-    # )
-
-    # from model_Diamond import DiamondNet
-    # model = DiamondNet(
-    #     input_dim=10,
-    #     output_dim=1,
-    #     clamp_output=True,
-    #     depths=depths,
-    #     dims=dims,
-    #     clamp_min=0.0,
-    #     clamp_max=100.0,
-    #     activation="relu",
     # )
 
     # from model_ResNet import ResNet
@@ -201,14 +188,25 @@ if __name__ == "__main__":
     #     num_heads=16,
     # )
 
-    from model_MixerMLP import MLPMixer
-    model = MLPMixer(
+    # from model_MixerMLP import MLPMixer
+    # model = MLPMixer(
+    #     chw=(10, 64, 64),
+    #     output_dim=1,
+    #     patch_size=16,
+    #     embed_dim=2048,
+    #     dim=1024,
+    #     depth=9,
+    # )
+
+    from model_DiamondFormer import DiamondFormer
+    model = DiamondFormer(
         chw=(10, 64, 64),
         output_dim=1,
-        patch_size=2,
+        patch_size=8,
         embed_dim=1024,
-        dim=512,
-        depth=6,
+        clamp_output=True,
+        clamp_min=0.0,
+        clamp_max=100.0,
     )
 
     train(
@@ -223,3 +221,5 @@ if __name__ == "__main__":
         patience=PATIENCE,
         predict_func=predict_func,
     )
+
+# DiamondNet - Default weights, batchNorm, ReLU

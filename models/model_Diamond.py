@@ -1,45 +1,30 @@
 import sys; sys.path.append("../")
 import torch
 import torch.nn as nn
-from utils import get_activation, get_normalization
 
-
-# TODO: Change norm to layer norm
-# TODO: Split attention and forward connection
 
 
 class CNNBlock(nn.Module):
-    def __init__(self,
-        in_channels,
-        out_channels, *,
-        norm="batch",
-        activation="relu",
-        padding="same",
-        residual=True,
-    ):
+    def __init__(self, in_channels, out_channels, *, residual=True):
         super(CNNBlock, self).__init__()
 
-        self.activation = get_activation(activation)
         self.residual = residual
-        self.padding = padding
         self.in_channels = in_channels
         self.out_channels = out_channels
 
-        if self.residual:
-            if in_channels != out_channels:
-                self.match_channels = nn.Sequential(
-                    nn.Conv2d(in_channels, out_channels, kernel_size=1, padding=0, bias=False),
-                    get_normalization(norm, out_channels),
-                )
+        self.activation = nn.ReLU()
+
+        self.norm1 = nn.BatchNorm2d(self.out_channels)
+        self.norm2 = nn.BatchNorm2d(self.out_channels)
+        self.norm3 = nn.BatchNorm2d(self.out_channels)
+        self.norm4 = nn.BatchNorm2d(self.out_channels)
 
         self.conv1 = nn.Conv2d(self.in_channels, self.out_channels, 1, padding=0, bias=False)
-        self.norm1 = get_normalization(norm, self.out_channels)
+        self.conv2 = nn.Conv2d(self.out_channels, self.out_channels, 3, padding="same", groups=self.out_channels, bias=False)
+        self.conv3 = nn.Conv2d(self.out_channels, self.out_channels, 3, padding="same", groups=1, bias=False)
 
-        self.conv2 = nn.Conv2d(self.out_channels, self.out_channels, 3, padding=self.padding, groups=self.out_channels, bias=False)
-        self.norm2 = get_normalization(norm, self.out_channels)
-
-        self.conv3 = nn.Conv2d(self.out_channels, self.out_channels, 3, padding=self.padding, groups=1, bias=False)
-        self.norm3 = get_normalization(norm, self.out_channels)
+        if self.residual and in_channels != out_channels:
+            self.match_channels = nn.Conv2d(in_channels, out_channels, kernel_size=1, padding=0, bias=False)
 
     def forward(self, x):
         identity = x
@@ -49,9 +34,9 @@ class CNNBlock(nn.Module):
 
         if self.residual:
             if x.size(1) != identity.size(1):
-                identity = self.match_channels(identity)
+                identity = self.norm4(self.match_channels(identity))
 
-            x += identity
+            x = identity + x
 
         x = self.activation(x)
 
@@ -59,26 +44,18 @@ class CNNBlock(nn.Module):
 
 
 class AttentionBlock(nn.Module):
-    def __init__(self,
-        in_channels,
-        out_channels, *,
-        norm="batch",
-        activation="relu",
-        padding="same",
-    ):
+    def __init__(self, in_channels, out_channels):
         super(AttentionBlock, self).__init__()
 
         self.in_channels = in_channels
         self.out_channels = out_channels
-        self.activation = get_activation(activation)
-        self.norm = norm
-        self.padding = padding
+        self.activation = nn.ReLU()
         self.expansion = 4
         self.reduction = 4
 
         self.match = nn.Sequential(
             nn.Conv2d(self.in_channels, self.out_channels, kernel_size=1, padding=0, bias=False),
-            get_normalization(self.norm, self.out_channels),
+            nn.BatchNorm2d(self.out_channels),
             self.activation,
         )
         self.compress = nn.Conv2d(self.out_channels * 2, 1, kernel_size=1, padding=0)
@@ -116,9 +93,6 @@ class DiamondNet(nn.Module):
         clamp_output=False,
         clamp_min=0.0,
         clamp_max=1.0,
-        activation="relu",
-        norm="batch",
-        padding="same",
     ):
         super(DiamondNet, self).__init__()
 
@@ -129,10 +103,8 @@ class DiamondNet(nn.Module):
         self.clamp_output = clamp_output
         self.clamp_min = clamp_min
         self.clamp_max = clamp_max
-        self.activation = get_activation(activation)
-        self.norm = norm
-        self.padding = padding
         self.stem_squeeze = 1
+        self.std = 0.02
         self.input_size = input_size
 
         self.sizes = [self.input_size // (2 ** (i + 1)) for i in reversed(range(len(self.depths)))]
@@ -172,12 +144,12 @@ class DiamondNet(nn.Module):
             nn.Flatten(),
             nn.Linear(self.stem_size, self.stem_size // self.stem_squeeze, bias=False),
             nn.BatchNorm1d(self.stem_size // self.stem_squeeze),
-            self.activation,
+            nn.ReLU(),
             nn.Linear(self.stem_size // self.stem_squeeze, self.stem_size, bias=False),
             nn.BatchNorm1d(self.stem_size),
-            self.activation,
+            nn.ReLU(),
         )
-        self.stem_match = CNNBlock(self.input_dim, self.dims[0], norm=self.norm, activation=self.activation, padding=self.padding, residual=True)
+        self.stem_match = CNNBlock(self.input_dim, self.dims[0], residual=True)
 
         # These are the residual blocks (4xdepth) and attention (4x1)
         self.blocks = []
@@ -193,23 +165,10 @@ class DiamondNet(nn.Module):
                 elif i > 0 and j == 0:
                     indims = self.dims[i - 1] + self.input_dim
 
-                block = CNNBlock(
-                        indims,
-                        self.dims[i],
-                        norm=self.norm,
-                        activation=self.activation,
-                        padding=self.padding,
-                    )
-                _blocks.append(block)
+                _blocks.append(CNNBlock(indims, self.dims[i]))
             self.blocks.append(nn.Sequential(*_blocks))
 
-            block_attn = AttentionBlock(
-                self.dims[i - (1 if i > 0 else 0)],
-                self.input_dim,
-                norm=self.norm,
-                activation=self.activation,
-                padding=self.padding,
-            )
+            block_attn = AttentionBlock(self.dims[i - (1 if i > 0 else 0)], self.input_dim)
             self.blocks_attn.append(block_attn)
 
         self.blocks = nn.ModuleList(self.blocks)
@@ -230,9 +189,27 @@ class DiamondNet(nn.Module):
 
         # Model output
         self.head = nn.Sequential(
-            CNNBlock(self.dims[-1], self.dims[-1], norm=self.norm, activation=self.activation, padding=self.padding),
+            CNNBlock(self.dims[-1], self.dims[-1]),
             nn.Conv2d(self.dims[-1], self.output_dim, 1),
         )
+
+        self.apply(self._init_weights)
+
+    def _init_weights(self, m):
+        if isinstance(m, nn.Linear):
+            std = self.std
+            torch.nn.init.trunc_normal_(m.weight, std=std, a=-std * 2, b=std * 2)
+            if m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+
+        if isinstance(m, nn.Conv2d):
+            torch.nn.init.kaiming_uniform_(m.weight)
+            if m.bias is not None:
+                nn.init.constant_(m.bias, 0)            
+
+        elif isinstance(m, nn.BatchNorm1d) or isinstance(m, nn.BatchNorm2d):
+            nn.init.constant_(m.bias, 0)
+            nn.init.constant_(m.weight, 1.0)
 
     def forward(self, x):
         identity = x
