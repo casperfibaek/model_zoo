@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+from timm.layers import DropPath
 
 
 class StarReLU(nn.Module):
@@ -15,7 +16,7 @@ class StarReLU(nn.Module):
 
 
 class MLPMixerLayer(nn.Module):
-    def __init__(self, dim, num_patches, hidden_dim, drop=0.2):
+    def __init__(self, dim, num_patches, hidden_dim, drop_n=0.1, drop_p=0.1):
         super(MLPMixerLayer, self).__init__()
         
         self.norm1 = nn.LayerNorm(dim)
@@ -32,19 +33,61 @@ class MLPMixerLayer(nn.Module):
             nn.Linear(hidden_dim, num_patches)
         )
 
-        self.dropout1 = nn.Dropout(drop) if drop > 0. else nn.Identity()
-        self.dropout2 = nn.Dropout(drop) if drop > 0. else nn.Identity()
+        self.dropout1 = nn.Dropout(drop_n) if drop_n > 0. else nn.Identity()
+        self.dropout2 = nn.Dropout(drop_n) if drop_n > 0. else nn.Identity()
+        self.drop_path1 = DropPath(drop_p) if drop_p > 0. else nn.Identity()
+        self.drop_path2 = DropPath(drop_p) if drop_p > 0. else nn.Identity()
         
     def forward(self, x):
         out = self.norm1(x)
-        out = out + self.dropout1(self.channel_mlp(out))
+        out = out + self.drop_path1(self.dropout1(self.channel_mlp(out)))
         out = out.transpose(1, 2)
 
         out = self.norm2(out)
-        out = out + self.dropout2(self.token_mlp(out))
+        out = out + self.drop_path2(self.dropout2(self.token_mlp(out)))
         out = out.transpose(1, 2)
         
         return out
+
+
+class CNNBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, *, residual=True):
+        super(CNNBlock, self).__init__()
+
+        self.residual = residual
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+
+        self.activation = nn.ReLU()
+
+        self.norm1 = nn.BatchNorm2d(self.out_channels)
+        self.norm2 = nn.BatchNorm2d(self.out_channels)
+        self.norm3 = nn.BatchNorm2d(self.out_channels)
+        self.norm4 = nn.BatchNorm2d(self.out_channels)
+
+        self.conv1 = nn.Conv2d(self.in_channels, self.out_channels, 1, padding=0, bias=False)
+        self.conv2 = nn.Conv2d(self.out_channels, self.out_channels, 3, padding="same", groups=self.out_channels, bias=False)
+        self.conv3 = nn.Conv2d(self.out_channels, self.out_channels, 3, padding="same", groups=1, bias=False)
+
+        if self.residual and in_channels != out_channels:
+            self.match_channels = nn.Conv2d(in_channels, out_channels, kernel_size=1, padding=0, bias=False)
+
+    def forward(self, x):
+        identity = x
+        x = self.activation(self.norm1(self.conv1(x)))
+        x = self.activation(self.norm2(self.conv2(x)))
+        x = self.norm3(self.conv3(x))
+
+        if self.residual:
+            if x.size(1) != identity.size(1):
+                identity = self.norm4(self.match_channels(identity))
+
+            x = identity + x
+
+        x = self.activation(x)
+
+        return x
+
 
 class MLPMixer(nn.Module):
     def __init__(self, chw, output_dim, patch_size, dim, depth, embed_dim):
@@ -55,7 +98,15 @@ class MLPMixer(nn.Module):
         self.std = .02
         self.num_patches = (chw[1] // patch_size) * (chw[2] // patch_size)
 
+        self.stem_channels = 32
+        self.stem = nn.Sequential(
+            CNNBlock(chw[0], self.stem_channels),
+            CNNBlock(self.stem_channels, self.stem_channels * 2),
+            CNNBlock(self.stem_channels * 2, self.stem_channels),
+        )
+
         self.projection = nn.Linear(chw[0] * (patch_size ** 2), dim)
+        self.projection = nn.Linear(self.stem_channels * (patch_size ** 2), dim)
         self.pos_embed = nn.Parameter(torch.zeros(1, self.num_patches, dim))
         self.mixer_layers = nn.ModuleList([
             MLPMixerLayer(dim, self.num_patches, embed_dim) for _ in range(depth)
@@ -105,6 +156,7 @@ class MLPMixer(nn.Module):
         return patches
         
     def forward(self, x):
+        x = self.stem(x)
         x = self.projection(self.patchify_batch(x))
         x = x + self.pos_embed
         
