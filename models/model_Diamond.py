@@ -257,8 +257,9 @@ if __name__ == "__main__":
         input_dim=10,
         output_dim=1,
         input_size=64,
-        depths=[3, 3, 3, 3],
-        dims=[96, 192, 384, 768],
+        depths = [3, 3, 3, 3],
+        dims = [32, 48, 64, 80],
+        # dims=[96, 192, 384, 768],
     )
 
     model(torch.randn((BATCH_SIZE, CHANNELS, HEIGHT, WIDTH)))

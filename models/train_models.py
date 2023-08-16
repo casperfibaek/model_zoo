@@ -105,22 +105,22 @@ if __name__ == "__main__":
     PATIENCE = 20
     LEARNING_RATE = 0.001
     BATCH_SIZE = 16
-    NAME = "DiamondFormer01"
+    NAME = "MetaFormer05"
 
     depths = [3, 3, 3, 3]
     dims = [32, 48, 64, 80]
 
-    from model_Diamond import DiamondNet
-    model = DiamondNet(
-        input_dim=10,
-        output_dim=1,
-        input_size=64,
-        depths=depths,
-        dims=dims,
-        clamp_output=True,
-        clamp_min=0.0,
-        clamp_max=100.0,
-    )
+    # from model_Diamond import DiamondNet
+    # model = DiamondNet(
+    #     input_dim=10,
+    #     output_dim=1,
+    #     input_size=64,
+    #     depths=depths,
+    #     dims=dims,
+    #     clamp_output=True,
+    #     clamp_min=0.0,
+    #     clamp_max=100.0,
+    # )
 
     # from model_ResNet import ResNet
     # model = ResNet(
@@ -198,15 +198,28 @@ if __name__ == "__main__":
     #     depth=5,
     # )
 
-    from model_DiamondFormer import DiamondFormer
-    model = DiamondFormer(
+    # from model_DiamondFormer import DiamondFormer
+    # model = DiamondFormer(
+    #     chw=(10, 64, 64),
+    #     output_dim=1,
+    #     patch_size=8,
+    #     # embed_dim=1024,
+    #     # clamp_output=True,
+    #     # clamp_min=0.0,
+    #     # clamp_max=100.0,
+    # )
+
+    from model_MetaFormer import MetaFormer
+    model = MetaFormer(
         chw=(10, 64, 64),
         output_dim=1,
         patch_size=8,
-        # embed_dim=1024,
-        # clamp_output=True,
-        # clamp_min=0.0,
-        # clamp_max=100.0,
+        depth=5,
+        embed_dim=512,
+        embed_channels=64,
+        clamp_output=True,
+        clamp_min=0.0,
+        clamp_max=100.0,
     )
 
     train(
@@ -225,3 +238,6 @@ if __name__ == "__main__":
 # DiamondNet - Default weights, batchNorm, ReLU
 # Epoch 50/100: 100% 265/265 [01:51<00:00,  2.38it/s, loss=95.3480, mse=95.3480, wmape=0.6455, mae=3.0573, val_loss=27.0051, val_mse=27.0051, val_wmape=0.7505, val_mae=0.9521]
 # Test Accuracy: 69.2184
+
+# Best DiamondFormer
+# Test Accuracy: 85.8081

@@ -2,12 +2,11 @@ import torch
 import torch.nn as nn
 from timm.layers import DropPath
 
-
 class StarReLU(nn.Module):
     def __init__(self, scale_value=1.0, bias_value=0.0, scale_learnable=True, bias_learnable=True, inplace=False):
         super().__init__()
         self.inplace = inplace
-        self.relu = nn.ReLU(inplace=inplace)
+        self.relu = nn.ReLU6(inplace=inplace)
         self.scale = nn.Parameter(scale_value * torch.ones(1), requires_grad=scale_learnable)
         self.bias = nn.Parameter(bias_value * torch.ones(1), requires_grad=bias_learnable)
 
@@ -16,14 +15,16 @@ class StarReLU(nn.Module):
 
 
 class CNNBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, *, residual=True):
+    def __init__(self, in_channels, out_channels, *, residual=True, drop_n=.0, drop_p=.0):
         super(CNNBlock, self).__init__()
 
         self.residual = residual
         self.in_channels = in_channels
         self.out_channels = out_channels
 
-        self.activation = nn.ReLU()
+        self.activation1 = StarReLU(inplace=True)
+        self.activation2 = StarReLU(inplace=True)
+        self.activation3 = StarReLU(inplace=True)
 
         self.norm1 = nn.BatchNorm2d(self.out_channels)
         self.norm2 = nn.BatchNorm2d(self.out_channels)
@@ -34,24 +35,29 @@ class CNNBlock(nn.Module):
         self.conv2 = nn.Conv2d(self.out_channels, self.out_channels, 3, padding="same", groups=self.out_channels, bias=False)
         self.conv3 = nn.Conv2d(self.out_channels, self.out_channels, 3, padding="same", groups=1, bias=False)
 
+        self.drop1 = nn.Dropout2d(drop_n) if drop_n > 0. else nn.Identity()
+        self.drop2 = nn.Dropout2d(drop_n) if drop_n > 0. else nn.Identity()
+        self.drop3 = nn.Dropout2d(drop_n) if drop_n > 0. else nn.Identity()
+        self.drop_path = DropPath(drop_p) if drop_p > 0. else nn.Identity()
+
         if self.residual and in_channels != out_channels:
             self.match_channels = nn.Conv2d(in_channels, out_channels, kernel_size=1, padding=0, bias=False)
 
     def forward(self, x):
-        identity = x
-        x = self.activation(self.norm1(self.conv1(x)))
-        x = self.activation(self.norm2(self.conv2(x)))
-        x = self.norm3(self.conv3(x))
+        out = self.drop1(self.activation1(self.norm1(self.conv1(x))))
+        out = self.drop2(self.activation2(self.norm2(self.conv2(out))))
+        out = self.drop3(self.norm3(self.conv3(out)))
 
         if self.residual:
-            if x.size(1) != identity.size(1):
-                identity = self.norm4(self.match_channels(identity))
+            if x.size(1) != out.size(1):
+                x = self.norm4(self.match_channels(x))
 
-            x = identity + x
+            x = x + self.drop_path(out)
 
-        x = self.activation(x)
+        x = self.activation3(x)
 
         return x
+
 
 
 class MLPMixerBlock(nn.Module):
@@ -61,8 +67,7 @@ class MLPMixerBlock(nn.Module):
         self.chw = chw
         self.num_patches = (chw[1] // patch_size) ** 2
         self.output_dim = output_dim
-        
-        self.cnn_in = CNNBlock(chw[0], chw[0], residual=False)
+        self.pos_embed = nn.Parameter(torch.zeros(1, self.num_patches, hidden_dims // 2))
         self.projection = nn.Linear(chw[0] * (patch_size ** 2), hidden_dims // 2)
         self.reprojection = nn.Linear(hidden_dims // 2, output_dim * (patch_size ** 2))
 
@@ -82,8 +87,7 @@ class MLPMixerBlock(nn.Module):
 
         self.dropout1 = nn.Dropout(drop_n) if drop_n > 0. else nn.Identity()
         self.dropout2 = nn.Dropout(drop_n) if drop_n > 0. else nn.Identity()
-        self.drop_path1 = DropPath(drop_p) if drop_p > 0. else nn.Identity()
-        self.drop_path2 = DropPath(drop_p) if drop_p > 0. else nn.Identity()
+        self.drop_path = DropPath(drop_p) if drop_p > 0. else nn.Identity()
 
     def patchify_batch(self, images):
         patch_size = self.patch_size
@@ -115,20 +119,22 @@ class MLPMixerBlock(nn.Module):
         return patches
 
     def forward(self, x):
-        out = self.cnn_in(x)
         out = self.projection(self.patchify_batch(x))
+        out = out + self.pos_embed
         out = self.norm1(out)
-        out = out + self.drop_path1(self.dropout1(self.channel_mlp(out)))
+        out = out + self.dropout1(self.channel_mlp(out))
         out = out.transpose(1, 2)
 
         out = self.norm2(out)
-        out = out + self.drop_path2(self.dropout2(self.token_mlp(out)))
+        out = out + self.dropout2(self.token_mlp(out))
         out = out.transpose(1, 2)
 
         out = self.reprojection(out)
         out = self.unpatchify_batch(out)
+
+        x = x + self.drop_path(out)
         
-        return out
+        return x
 
 
 class DiamondFormer(nn.Module):
@@ -140,19 +146,32 @@ class DiamondFormer(nn.Module):
         self.std = .02
         self.num_patches = (chw[1] // patch_size) * (chw[2] // patch_size)
 
-        self.stem = nn.Sequential(CNNBlock(chw[0], 32), CNNBlock(32, 32))
+        self.stem_channels = 64
+        self.stem = nn.Sequential(
+            CNNBlock(chw[0], self.stem_channels),
+            CNNBlock(self.stem_channels, self.stem_channels * 2),
+            CNNBlock(self.stem_channels * 2, self.stem_channels),
+        )
 
-        self.mlp_block1 = MLPMixerBlock(32, 32, patch_size)
-        self.mlp_block2 = MLPMixerBlock((32, chw[1], chw[2]), 48, patch_size)
-        self.mlp_block3 = MLPMixerBlock((48, chw[1], chw[2]), 64, patch_size)
-        self.mlp_block_out = MLPMixerBlock((64, chw[1], chw[2]), 1, patch_size)
+        # self.mlp_block1 = MLPMixerBlock((64, chw[1], chw[2]), 64, patch_size, hidden_dims=embed_dim)
+        # self.mlp_block2 = MLPMixerBlock((64, chw[1], chw[2]), 64, patch_size, hidden_dims=embed_dim)
+        # self.mlp_block3 = MLPMixerBlock((64, chw[1], chw[2]), 64, patch_size, hidden_dims=embed_dim)
+
+        self.cnn_block1 = CNNBlock(64, 64)
+        self.cnn_block2 = CNNBlock(64, 64)
+        self.cnn_block3 = CNNBlock(64, 64)
+
+        self.cnn_out = nn.Conv2d(64, 1, 1)
         
     def forward(self, x):
         x = self.stem(x)
-        x = self.mlp_block1(x)
-        x = self.mlp_block2(x)
-        x = self.mlp_block3(x)
-        x = self.mlp_block_out(x)
+        # x = self.mlp_block1(x)
+        x = self.cnn_block1(x)
+        # x = self.mlp_block2(x)
+        x = self.cnn_block2(x)
+        # x = self.mlp_block3(x)
+        x = self.cnn_block3(x)
+        x = self.cnn_out(x)
 
         x = torch.clamp(x, 0.0, 100.0)
         
@@ -171,9 +190,9 @@ if __name__ == "__main__":
         chw=(CHANNELS, HEIGHT, WIDTH),
         output_dim=1,
         patch_size=8,
-        embed_dim=1024,
-        dim=512,
-        depth=6,
+        # embed_dim=512,
+        # dim=256,
+        # depth=6,
     )
     model(torch.randn((BATCH_SIZE, CHANNELS, HEIGHT, WIDTH)))
 
