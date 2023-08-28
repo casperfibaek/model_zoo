@@ -10,7 +10,7 @@ class TiledMSE(nn.Module):
     Calculates the MSE at full image level and at the pixel level and weights the two.
     result = (sum_mse * (1 - bias)) + (mse * bias)
     """
-    def __init__(self, bias=0.2, scale_term=1.0):
+    def __init__(self, bias=0.8, scale_term=1.0):
         super(TiledMSE, self).__init__()
         self.bias = bias
         self.scale_term = scale_term
@@ -19,13 +19,62 @@ class TiledMSE(nn.Module):
         y_true = (y_true + 1) * self.scale_term
         y_pred = (y_pred + 1) * self.scale_term
 
-        y_pred_sum = torch.sum(y_pred, dim=(1, 2, 3)) / (y_pred.shape[1] * y_pred.shape[2] * y_pred.shape[3])
-        y_true_sum = torch.sum(y_true, dim=(1, 2, 3)) / (y_true.shape[1] * y_true.shape[2] * y_true.shape[3])
+        y_pred_sum = torch.sum(y_pred, dim=(2, 3)) / (y_pred.shape[1] * y_pred.shape[2] * y_pred.shape[3])
+        y_true_sum = torch.sum(y_true, dim=(2, 3)) / (y_true.shape[1] * y_true.shape[2] * y_true.shape[3])
 
-        sum_mse = ((y_pred_sum - y_true_sum) ** 2).mean()
-        mse = ((y_pred - y_true) ** 2).mean()
+        sum_mse = torch.mean((y_pred_sum - y_true_sum) ** 2, dim=1).mean()
+        mse = torch.mean((y_pred - y_true) ** 2, dim=1).mean()
 
         weighted = (sum_mse * (1 - self.bias)) + (mse * self.bias)
+        
+        return weighted 
+
+
+class TiledMAPE(nn.Module):
+    """
+    Calculates the MSE at full image level and at the pixel level and weights the two.
+    result = (sum_mse * (1 - bias)) + (mse * bias)
+    """
+    def __init__(self, beta=0.1, bias=0.8):
+        super(TiledMAPE, self).__init__()
+        self.beta = beta
+        self.bias = bias
+        self.eps = 1e-6
+
+    def forward(self, y_pred, y_true):
+        y_pred_sum = torch.sum(y_pred, dim=(2, 3)) / (y_pred.shape[1] * y_pred.shape[2] * y_pred.shape[3])
+        y_true_sum = torch.sum(y_true, dim=(2, 3)) / (y_true.shape[1] * y_true.shape[2] * y_true.shape[3])
+
+        mape_sum = torch.mean(torch.abs((y_true_sum - y_pred_sum) / (y_true_sum + self.eps + self.beta)), dim=1).mean()
+        mape = torch.mean(torch.abs((y_true - y_pred) / (y_true + self.eps + self.beta)), dim=1).mean()
+
+        weighted = (mape_sum * (1 - self.bias)) + (mape * self.bias)
+        
+        return weighted 
+
+
+class TiledMAPE2(nn.Module):
+    """
+    Calculates the MSE at full image level and at the pixel level and weights the two.
+    result = (sum_mse * (1 - bias)) + (mse * bias)
+    """
+    def __init__(self, beta=0.1, bias=0.8):
+        super(TiledMAPE2, self).__init__()
+        self.beta = beta
+        self.bias = bias
+        self.eps = 1e-6
+
+    def forward(self, y_pred, y_true):
+        eps = torch.Tensor([self.eps]).to(y_pred.device)
+        y_true_sum = torch.sum(y_true, dim=(2, 3)) / (y_true.shape[1] * y_true.shape[2] * y_true.shape[3])
+
+        abs_diff = torch.abs(y_true - y_pred)
+        abs_diff_sum = torch.sum(abs_diff, dim=(2, 3)) / (y_pred.shape[1] * y_pred.shape[2] * y_pred.shape[3])
+
+        wape = torch.mean(abs_diff_sum / torch.maximum(y_true_sum + self.beta, eps), dim=1).mean()
+        mape = torch.mean(abs_diff / torch.maximum(y_true + self.beta, eps), dim=1).mean()
+
+        weighted = (wape * (1 - self.bias)) + (mape * self.bias)
         
         return weighted 
 

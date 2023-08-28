@@ -166,6 +166,7 @@ data/patches/*.npy
 data/patches/*.npz
 trained_models/*.pt
 visualisations/*.tif
+visualisations/*.png
 visualisations/*.xml
 visualisations/*.mp4
 models/wandb

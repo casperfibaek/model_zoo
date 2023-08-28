@@ -4,41 +4,76 @@ import torch.nn as nn
 
 
 
+class ScaleSkip2D(nn.Module):
+    def __init__(self, channels, drop_p=0.1):
+        super(ScaleSkip2D, self).__init__()
+        self.channels = channels
+        self.drop_p = drop_p
+
+        self.skipscale = nn.Parameter(torch.ones(1, self.channels, 1, 1))
+        self.skipbias = nn.Parameter(torch.zeros(1, self.channels, 1, 1))
+        self.dropout = nn.Dropout2d(drop_p) if drop_p > 0. else nn.Identity()
+
+        torch.nn.init.normal_(self.skipscale, mean=1.0, std=.02)
+        torch.nn.init.normal_(self.skipbias, mean=0.0, std=.02)
+
+    def forward(self, x, skip_connection):
+        scale = torch.clamp(self.skipscale, -10.0, 10.0)
+        bias = torch.clamp(self.skipbias, -1.0, 1.0)
+        y = scale * self.dropout(skip_connection) + bias
+
+        return x + y
+
+
 class CNNBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, *, residual=True):
+    def __init__(self,
+        in_channels,
+        out_channels,
+        *,
+        apply_residual=True,
+        drop_n=0.1,
+        drop_p=0.1,
+    ):
         super(CNNBlock, self).__init__()
 
-        self.residual = residual
+        self.apply_residual = apply_residual
         self.in_channels = in_channels
         self.out_channels = out_channels
 
-        self.activation = nn.ReLU()
+        self.activation1 = nn.ReLU6()
+        self.activation2 = nn.ReLU6()
+        self.activation3 = nn.ReLU6()
+
 
         self.norm1 = nn.BatchNorm2d(self.out_channels)
         self.norm2 = nn.BatchNorm2d(self.out_channels)
         self.norm3 = nn.BatchNorm2d(self.out_channels)
         self.norm4 = nn.BatchNorm2d(self.out_channels)
 
+        self.drop = nn.Dropout(drop_n) if drop_n > 0. else nn.Identity()
+        self.skipper = ScaleSkip2D(self.out_channels, drop_p=drop_p)
+
         self.conv1 = nn.Conv2d(self.in_channels, self.out_channels, 1, padding=0, bias=False)
         self.conv2 = nn.Conv2d(self.out_channels, self.out_channels, 3, padding="same", groups=self.out_channels, bias=False)
         self.conv3 = nn.Conv2d(self.out_channels, self.out_channels, 3, padding="same", groups=1, bias=False)
 
-        if self.residual and in_channels != out_channels:
+        if self.apply_residual and in_channels != out_channels:
             self.match_channels = nn.Conv2d(in_channels, out_channels, kernel_size=1, padding=0, bias=False)
 
     def forward(self, x):
         identity = x
-        x = self.activation(self.norm1(self.conv1(x)))
-        x = self.activation(self.norm2(self.conv2(x)))
+        x = self.activation1(self.norm1(self.conv1(x)))
+        x = self.activation2(self.norm2(self.conv2(x)))
         x = self.norm3(self.conv3(x))
+        x = self.drop(x)
 
-        if self.residual:
+        if self.apply_residual:
             if x.size(1) != identity.size(1):
                 identity = self.norm4(self.match_channels(identity))
 
-            x = identity + x
+            x = self.skipper(identity, x)
 
-        x = self.activation(x)
+        x = self.activation3(x)
 
         return x
 
@@ -135,6 +170,7 @@ class DiamondNet(nn.Module):
             )
         )
         self.pools = nn.ModuleList(self.pools)
+        self.sizes.append(input_size)
 
         assert len(self.depths) == len(self.dims), "depths and dims must have the same length."
 
@@ -144,12 +180,12 @@ class DiamondNet(nn.Module):
             nn.Flatten(),
             nn.Linear(self.stem_size, self.stem_size // self.stem_squeeze, bias=False),
             nn.BatchNorm1d(self.stem_size // self.stem_squeeze),
-            nn.ReLU(),
+            nn.ReLU6(),
             nn.Linear(self.stem_size // self.stem_squeeze, self.stem_size, bias=False),
             nn.BatchNorm1d(self.stem_size),
-            nn.ReLU(),
+            nn.ReLU6(),
         )
-        self.stem_match = CNNBlock(self.input_dim, self.dims[0], residual=True)
+        self.stem_match = CNNBlock(self.input_dim, self.dims[0])
 
         # These are the residual blocks (4xdepth) and attention (4x1)
         self.blocks = []

@@ -29,7 +29,7 @@ def training_loop(
     patience=20,
     learning_rate_end=0.00001,
     weight_decay=0.01,
-    weight_decay_end=0.005,
+    weight_decay_end=0.001,
     warmup_epochs=10,
     warmup_lr_start=0.0000001,
     min_epochs=50,

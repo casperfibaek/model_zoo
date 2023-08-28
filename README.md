@@ -6,29 +6,18 @@ Download data from here:
 
 Unzip into the images folder.
 
-EfficientNet
-ResNets (ResNet-50, 101, & 152)
-ResNext, ResNext v2, ResNext_inception_v2
-InceptionNetworks (w/ or wo/ Residuals)
-U-nets
-Bottoms-up
-VisionTransforms
+Training recipe:
+    For patch based models:
+        1. Train AE first with only flip and rotation augmentation.
+        Use MSE or tiled MSE loss.
+        Do this on a subset of the whole data (say 10%)
 
-TODO:
-    For all networks implement an encoder-decoder network.
-    The unet and classificiation network could be in the same file..
-    Implement different scales of the same networks
-        ResNet: tiny, nano, large, ...
-        ResNetUnet: tiny, nano, large...
-        
-        ResNext: tiny, nano, large, ...
-        ResNextUnet: tiny, nano, large, ...
+        2. Train the Masked AE with masking and flip and rotation augmentation.
+        Use Tiled Mape as loss
+        Do this on the whole dataset.
+        If the dataset is so massive that epoching is not possible.
+        Use DatasetRandomSampling and run the training in a while loop, saving a checkpoint every ~1000 iterations.
+        This will allow you to resume training from the last checkpoint, and train for as long as you want. (fit permitting)
 
-        InceptionResNext: tiny, nano, large, ...
-        InceptionResNextUnet: tiny, nano, large, ...
-
-        InceptionResNet: tiny, nano, large, ...
-        InceptionResNetUnet: tiny, nano, large, ...
-
-        EfficientNet??
-        SqueezeNet??
+        3. Use the MAE model as encoder and train the downstream task with simple augmentations.
+     

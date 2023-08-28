@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torchmetrics
 
-from utils import load_data, training_loop, TiledMSE
+from utils import load_data, training_loop, load_data_ae, TiledMAPE2, TiledMSE
 
 
 def train(
@@ -17,7 +17,7 @@ def train(
     name=str,
     use_wandb: bool = True,
     predict_func=None,
-    save_best_model: bool = False,
+    save_best_model: bool = True,
     patience=20,
     min_epochs=50,
 ) -> str:
@@ -41,8 +41,8 @@ def train(
         learning_rate=learning_rate,
         learning_rate_end=learning_rate_end,
         model=model,
-        # criterion=TiledMSE(0.2),
         criterion=nn.MSELoss(),
+        # criterion=TiledMSE(bias=0.8),
         device=device,
         metrics=[
             mse.to(device),
@@ -105,7 +105,7 @@ if __name__ == "__main__":
     PATIENCE = 20
     LEARNING_RATE = 0.001
     BATCH_SIZE = 16
-    NAME = "MetaFormer05"
+    NAME = "Diamond01"
 
     depths = [3, 3, 3, 3]
     dims = [32, 48, 64, 80]
@@ -178,25 +178,30 @@ if __name__ == "__main__":
     #     n_heads=16,
     # )
 
-    # from model_vit import ViT
+    # from model_VisionTransformer import ViT
     # model = ViT(
     #     chw=(10, 64, 64),
     #     output_dim=1,
-    #     patch_size=8,
+    #     patch_size=4,
     #     embed_dim=768,
     #     depth=3,
     #     num_heads=16,
     # )
 
-    # from model_MixerMLP import MLPMixer
-    # model = MLPMixer(
-    #     chw=(10, 64, 64),
-    #     output_dim=1,
-    #     patch_size=8,
-    #     embed_dim=512,
-    #     dim=256,
-    #     depth=5,
-    # )
+    from model_MixerMLP import MLPMixer
+    model = MLPMixer(
+        chw=(10, 64, 64),
+        output_dim=1,
+        patch_size=4,
+        dim=256,
+        depth=3,
+        channel_scale=2,
+        drop_n=0.1,
+        drop_p=0.1,
+        clamp_output=True,
+        clamp_min=0.0,
+        clamp_max=100.0,
+    )
 
     # from model_DiamondFormer import DiamondFormer
     # model = DiamondFormer(
@@ -209,18 +214,18 @@ if __name__ == "__main__":
     #     # clamp_max=100.0,
     # )
 
-    from model_MetaFormer import MetaFormer
-    model = MetaFormer(
-        chw=(10, 64, 64),
-        output_dim=1,
-        patch_size=8,
-        depth=5,
-        embed_dim=512,
-        embed_channels=64,
-        clamp_output=True,
-        clamp_min=0.0,
-        clamp_max=100.0,
-    )
+    # from model_MetaFormer import MetaFormer
+    # model = MetaFormer(
+    #     chw=(10, 64, 64),
+    #     output_dim=1,
+    #     patch_size=8,
+    #     depth=5,
+    #     embed_dim=512,
+    #     embed_channels=64,
+    #     clamp_output=True,
+    #     clamp_min=0.0,
+    #     clamp_max=100.0,
+    # )
 
     train(
         num_epochs=NUM_EPOCHS,
@@ -240,4 +245,11 @@ if __name__ == "__main__":
 # Test Accuracy: 69.2184
 
 # Best DiamondFormer
-# Test Accuracy: 85.8081
+# # Test Accuracy: 85.8081
+
+# MLP-mixer
+# Early stopping triggered after 86 epochs.
+# Finished Training. Best epoch:  66
+
+# Starting Testing... (Best val epoch).
+# Test Accuracy: 87.9650

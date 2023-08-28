@@ -111,37 +111,31 @@ class CNNBlock(nn.Module):
 
 
 class MLPMixerLayer(nn.Module):
-    def __init__(self,
-        embed_dims,
-        num_patches,
-        channel_scale, *,
-        drop_n=0.0,
-        drop_p=0.0,
-    ):
+    def __init__(self, dim, num_patches, hidden_dim, drop_n=0.0, drop_p=0.0):
         super(MLPMixerLayer, self).__init__()
 
-        self.embed_dims = embed_dims
-        self.hidden_dim = int(embed_dims * channel_scale)
+        self.dim = dim
         self.num_patches = num_patches
+        self.hidden_dim = hidden_dim
         self.drop_n = drop_n
         self.drop_p = drop_p
 
-        self.norm1 = RMSNorm(self.embed_dims)
+        self.norm1 = RMSNorm(dim)
         self.token_mlp = nn.Sequential(
-            nn.Linear(self.embed_dims, self.hidden_dim),
-            nn.ReLU6(),
-            nn.Linear(self.hidden_dim, self.embed_dims)
+            nn.Linear(dim, hidden_dim),
+            nn.ReLU6(inplace=True),
+            nn.Linear(hidden_dim, dim)
         )
         
         self.norm2 = RMSNorm(num_patches)
         self.patches_mlp = nn.Sequential(
-            nn.Linear(num_patches, self.hidden_dim),
-            nn.ReLU6(),
-            nn.Linear(self.hidden_dim, num_patches)
+            nn.Linear(num_patches, hidden_dim),
+            nn.ReLU6(inplace=True),
+            nn.Linear(hidden_dim, num_patches)
         )
 
         self.skipper1 = ScaleSkip1D(num_patches, drop_n=drop_n)
-        self.skipper2 = ScaleSkip1D(self.embed_dims, drop_n=drop_n)
+        self.skipper2 = ScaleSkip1D(dim, drop_n=drop_n)
 
     def forward(self, x):
         out = self.norm1(x)
@@ -162,7 +156,8 @@ class MLPMixer(nn.Module):
         patch_size,
         dim,
         depth,
-        channel_scale=2,
+        embed_dim,
+        expansion=4,
         drop_n=0.1,
         drop_p=0.1,
         clamp_output=False,
@@ -175,33 +170,35 @@ class MLPMixer(nn.Module):
         self.patch_size = patch_size
         self.dim = dim
         self.depth = depth
-        self.channel_scale = channel_scale
+        self.embed_dim = embed_dim
+        self.expansion = expansion
         self.drop_n = drop_n
         self.drop_p = drop_p
         self.clamp_output = clamp_output
         self.clamp_min = clamp_min
         self.clamp_max = clamp_max
         self.std = .02
+        self.expansion = expansion
 
         self.num_patches = (chw[1] // patch_size) * (chw[2] // patch_size)
-        self.stem_channels = dim // (patch_size ** 2)
-        self.embed_dims = self.stem_channels * (patch_size ** 2)
 
+        self.stem_channels = (dim // (patch_size ** 2)) * self.expansion
         self.stem = nn.Sequential(
             CNNBlock(chw[0], self.stem_channels, drop_n=0.0, drop_p=0.0),
             CNNBlock(self.stem_channels, self.stem_channels * 2, drop_n=drop_n, drop_p=drop_p),
             CNNBlock(self.stem_channels * 2, self.stem_channels, drop_n=drop_n, drop_p=drop_p),
         )
 
+        import pdb; pdb.set_trace()
+        self.projection = nn.Linear(self.stem_channels * (patch_size ** 2), dim)
         self.mixer_layers = nn.ModuleList([
-            MLPMixerLayer(
-                self.embed_dims,
-                self.num_patches,
-                channel_scale=self.channel_scale,
-                drop_n=drop_n,
-                drop_p=drop_p,
-            ) for _ in range(depth)
+            MLPMixerLayer(dim, self.num_patches, embed_dim, drop_n=drop_n, drop_p=drop_p) for _ in range(depth)
         ])
+        self.reproject = nn.Sequential(
+            nn.Linear(dim, int(self.stem_channels * (patch_size ** 2))),
+            RMSNorm(int(self.stem_channels * (patch_size ** 2))),
+            nn.ReLU6(),
+        )
         self.skipper = ScaleSkip2D(self.stem_channels, drop_p=drop_p)
 
         self.head = nn.Sequential(
@@ -255,6 +252,7 @@ class MLPMixer(nn.Module):
     
     def forward_project(self, x):
         x = self.patchify_batch(x)
+        x = self.projection(x)
 
         return x
 
@@ -265,6 +263,7 @@ class MLPMixer(nn.Module):
         return x
 
     def forward_reproject(self, x):
+        x = self.reproject(x)
         x = self.unpatchify_batch(x)
 
         return x
@@ -300,12 +299,13 @@ if __name__ == "__main__":
         chw=(10, 64, 64),
         output_dim=10,
         patch_size=4,
-        dim=256,
-        channel_scale=2,
-        depth=3,
-        clamp_output=True,
+        embed_dim=256,
+        expansion=4,
+        dim=128,
+        depth=5,
+        clamp_output=False,
         clamp_min=0.0,
-        clamp_max=100.0,
+        clamp_max=1.0,
     )
     model(torch.randn((BATCH_SIZE, CHANNELS, HEIGHT, WIDTH)))
 
