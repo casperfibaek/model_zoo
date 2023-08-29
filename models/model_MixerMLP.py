@@ -58,6 +58,33 @@ class RMSNorm(torch.nn.Module):
         return output * self.weight
 
 
+def patchify_batch(images, patch_size):
+    batch_size, channels, height, width = images.shape
+
+    n_patches_y = height // patch_size
+    n_patches_x = width // patch_size
+    n_patches = n_patches_y * n_patches_x
+
+    channel_last = images.swapaxes(1, -1)
+    reshaped = channel_last.reshape(batch_size, n_patches_y, patch_size, n_patches_x, patch_size, channels)
+    swaped = reshaped.swapaxes(2, 3)
+    blocks = swaped.reshape(batch_size, -1, patch_size, patch_size, channels)
+    patches = blocks.reshape(batch_size, n_patches, -1)
+
+    return patches
+
+def unpatchify_batch(patches, chw, patch_size):
+    channels, height, width = chw
+    batch_size, _n_patches, _ = patches.shape
+    
+    patches = patches.reshape(batch_size, height // patch_size, width // patch_size, patch_size, patch_size, channels)
+    patches = patches.swapaxes(2, 3)
+    patches = patches.reshape(batch_size, height, width, channels)
+    patches = patches.swapaxes(1, -1)
+
+    return patches
+
+
 class CNNBlock(nn.Module):
     def __init__(self,
         in_channels,
@@ -117,6 +144,8 @@ class MLPMixerLayer(nn.Module):
         channel_scale, *,
         drop_n=0.0,
         drop_p=0.0,
+        patch_size=16,
+        chw=(10, 64, 64),
     ):
         super(MLPMixerLayer, self).__init__()
 
@@ -125,6 +154,8 @@ class MLPMixerLayer(nn.Module):
         self.num_patches = num_patches
         self.drop_n = drop_n
         self.drop_p = drop_p
+        self.patch_size = patch_size
+        self.chw = chw
 
         self.norm1 = RMSNorm(self.embed_dims)
         self.token_mlp = nn.Sequential(
@@ -144,13 +175,15 @@ class MLPMixerLayer(nn.Module):
         self.skipper2 = ScaleSkip1D(self.embed_dims, drop_n=drop_n)
 
     def forward(self, x):
-        out = self.norm1(x)
+        out = patchify_batch(x, self.patch_size)
+        out = self.norm1(out)
         out = self.skipper1(out, self.token_mlp(out))
         out = out.transpose(1, 2)
 
         out = self.norm2(out)
         out = self.skipper2(out, self.patches_mlp(out))
         out = out.transpose(1, 2)
+        out = unpatchify_batch(out, self.chw, self.patch_size)
 
         return out
 
@@ -181,7 +214,7 @@ class MLPMixer(nn.Module):
         self.clamp_output = clamp_output
         self.clamp_min = clamp_min
         self.clamp_max = clamp_max
-        self.std = .02
+        self.std = .05
 
         self.num_patches = (chw[1] // patch_size) * (chw[2] // patch_size)
         self.stem_channels = dim // (patch_size ** 2)
@@ -194,12 +227,22 @@ class MLPMixer(nn.Module):
         )
 
         self.mixer_layers = nn.ModuleList([
-            MLPMixerLayer(
-                self.embed_dims,
-                self.num_patches,
-                channel_scale=self.channel_scale,
-                drop_n=drop_n,
-                drop_p=drop_p,
+            nn.Sequential(
+                MLPMixerLayer(
+                    self.embed_dims,
+                    self.num_patches,
+                    channel_scale=self.channel_scale,
+                    drop_n=drop_n,
+                    drop_p=drop_p,
+                    patch_size=self.patch_size,
+                    chw=(self.stem_channels, self.chw[1], self.chw[2]),
+                ),
+                CNNBlock(
+                    self.stem_channels,
+                    self.stem_channels,
+                    drop_n=drop_n,
+                    drop_p=drop_p,
+                ),
             ) for _ in range(depth)
         ])
         self.skipper = ScaleSkip2D(self.stem_channels, drop_p=drop_p)
@@ -218,43 +261,9 @@ class MLPMixer(nn.Module):
 
             if m.bias is not None:
                 nn.init.constant_(m.bias, 0)
-
-    def patchify_batch(self, images):
-        patch_size = self.patch_size
-        batch_size, channels, height, width = images.shape
-
-        n_patches_y = height // patch_size
-        n_patches_x = width // patch_size
-        n_patches = n_patches_y * n_patches_x
-
-        channel_last = images.swapaxes(1, -1)
-        reshaped = channel_last.reshape(batch_size, n_patches_y, patch_size, n_patches_x, patch_size, channels)
-        swaped = reshaped.swapaxes(2, 3)
-        blocks = swaped.reshape(batch_size, -1, patch_size, patch_size, channels)
-        patches = blocks.reshape(batch_size, n_patches, -1)
-
-        return patches
-    
-    def unpatchify_batch(self, patches, channels=0):
-        _, height, width = self.chw
-        channels = channels if channels > 0 else self.stem_channels
-        patch_size = self.patch_size
-        batch_size, _n_patches, _ = patches.shape
-        
-        patches = patches.reshape(batch_size, height // patch_size, width // patch_size, patch_size, patch_size, channels)
-        patches = patches.swapaxes(2, 3)
-        patches = patches.reshape(batch_size, height, width, channels)
-        patches = patches.swapaxes(1, -1)
-
-        return patches
     
     def forward_stem(self, x):
         x = self.stem(x)
-
-        return x
-    
-    def forward_project(self, x):
-        x = self.patchify_batch(x)
 
         return x
 
@@ -264,11 +273,6 @@ class MLPMixer(nn.Module):
 
         return x
 
-    def forward_reproject(self, x):
-        x = self.unpatchify_batch(x)
-
-        return x
-    
     def forward_head(self, x):
         x = self.head(x)
 
@@ -276,9 +280,7 @@ class MLPMixer(nn.Module):
 
     def forward(self, identity):
         skip = self.forward_stem(identity)
-        x = self.forward_project(skip)
-        x = self.forward_trunc(x)
-        x = self.forward_reproject(x)
+        x = self.forward_trunc(skip)
         x = self.skipper(skip, x)
         x = self.forward_head(x)
 

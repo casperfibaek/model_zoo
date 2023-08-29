@@ -112,12 +112,12 @@ def load_data(*, x="s2", y="area", with_augmentations=False, num_workers=0, batc
             augmentations=[
                 beo.AugmentationRotationXY(p=0.2, inplace=True),
                 beo.AugmentationMirrorXY(p=0.2, inplace=True),
-                # beo.AugmentationCutmix(p=0.2, inplace=True),
-                # beo.AugmentationChannelScale(p=0.2, inplace=True),
+                beo.AugmentationCutmix(p=0.2, inplace=True),
+                beo.AugmentationChannelScale(p=0.2, inplace=True),
                 # beo.AugmentationBlur(p=0.2, inplace=True),
                 # beo.AugmentationSharpen(p=0.2, inplace=True),
-                # beo.AugmentationNoiseNormal(p=0.2, inplace=True),
-                # beo.AugmentationNoiseUniform(p=0.2, inplace=True),
+                beo.AugmentationNoiseNormal(p=0.2, inplace=True),
+                beo.AugmentationNoiseUniform(p=0.2, inplace=True),
             ],
         )
     else:

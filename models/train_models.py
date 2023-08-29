@@ -105,7 +105,7 @@ if __name__ == "__main__":
     PATIENCE = 20
     LEARNING_RATE = 0.001
     BATCH_SIZE = 16
-    NAME = "Diamond01"
+    NAME = "MixerCNN01"
 
     depths = [3, 3, 3, 3]
     dims = [32, 48, 64, 80]
@@ -193,8 +193,8 @@ if __name__ == "__main__":
         chw=(10, 64, 64),
         output_dim=1,
         patch_size=4,
-        dim=256,
-        depth=3,
+        dim=512,
+        depth=5,
         channel_scale=2,
         drop_n=0.1,
         drop_p=0.1,
@@ -240,16 +240,8 @@ if __name__ == "__main__":
         predict_func=predict_func,
     )
 
-# DiamondNet - Default weights, batchNorm, ReLU
-# Epoch 50/100: 100% 265/265 [01:51<00:00,  2.38it/s, loss=95.3480, mse=95.3480, wmape=0.6455, mae=3.0573, val_loss=27.0051, val_mse=27.0051, val_wmape=0.7505, val_mae=0.9521]
-# Test Accuracy: 69.2184
+# DiamondNet best result
+# Test Accuracy: 67.6795
 
-# Best DiamondFormer
-# # Test Accuracy: 85.8081
-
-# MLP-mixer
-# Early stopping triggered after 86 epochs.
-# Finished Training. Best epoch:  66
-
-# Starting Testing... (Best val epoch).
-# Test Accuracy: 87.9650
+# MixerMLP best result
+# Test Accuracy: 73.8183
