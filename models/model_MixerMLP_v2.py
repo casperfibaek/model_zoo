@@ -2,6 +2,11 @@ import torch
 import torch.nn as nn
 
 
+# TODO:
+# - [ ] Determine implementation of skip connections
+# - [ ] Add overlaps to patches
+# - [ ] Allow deformable/learnable patch locations
+
 class ScaleSkip2D(nn.Module):
     def __init__(self, channels, drop_p=0.1):
         super(ScaleSkip2D, self).__init__()
@@ -36,7 +41,7 @@ class RMSNorm(torch.nn.Module):
 
 
 class StarReLU(nn.Module):
-    def __init__(self, scale_value=1.0, bias_value=0.0, scale_learnable=True, bias_learnable=True, mode=None, inplace=False):
+    def __init__(self, scale_value=1.0, bias_value=0.0, scale_learnable=True, bias_learnable=True, inplace=False):
         super().__init__()
         self.inplace = inplace
         self.relu = nn.ReLU(inplace=inplace)
@@ -53,7 +58,6 @@ class CNNBlock(nn.Module):
         out_channels,
         *,
         apply_residual=True,
-        drop_n=0.0,
         drop_p=0.0,
     ):
         super(CNNBlock, self).__init__()
@@ -71,7 +75,6 @@ class CNNBlock(nn.Module):
         self.norm3 = nn.BatchNorm2d(self.out_channels)
         self.norm4 = nn.BatchNorm2d(self.out_channels)
 
-        self.drop = nn.Dropout2d(drop_n) if drop_n > 0. else nn.Identity()
         self.skipper = ScaleSkip2D(self.out_channels, drop_p=drop_p)
 
         self.conv1 = nn.Conv2d(self.in_channels, self.out_channels, 1, padding=0, bias=False)
@@ -146,7 +149,7 @@ class MLPMixerLayer(nn.Module):
         B, C, H, W = tensor.shape
 
         tensor = tensor.unfold(2, tile_size, tile_size).unfold(3, tile_size, tile_size)
-        tensor = tensor.reshape(B, C, H//tile_size, W//tile_size, tile_size*tile_size)
+        tensor = tensor.reshape(B, C, H//tile_size, W//tile_size, tile_size*tile_size) # Should this be merged with below?
         tensor = tensor.reshape(B, C, H//tile_size * W//tile_size, tile_size*tile_size)
 
         return tensor
@@ -194,9 +197,9 @@ class MLPMixer(nn.Module):
         self.std = .05
 
         self.stem = nn.Sequential(
-            CNNBlock(chw[0], self.embedding_dims, drop_n=0.0, drop_p=0.0),
-            CNNBlock(self.embedding_dims, self.embedding_dims, drop_n=drop_n, drop_p=drop_p),
-            CNNBlock(self.embedding_dims, self.embedding_dims, drop_n=drop_n, drop_p=drop_p),
+            CNNBlock(chw[0], self.embedding_dims, drop_p=0.0),
+            CNNBlock(self.embedding_dims, self.embedding_dims, drop_p=drop_p),
+            CNNBlock(self.embedding_dims, self.embedding_dims, drop_p=drop_p),
         )
 
         self.mixer_layers = []
@@ -214,7 +217,7 @@ class MLPMixer(nn.Module):
         self.skipper = ScaleSkip2D(self.embedding_dims, drop_p=drop_p)
 
         self.head = nn.Sequential(
-            CNNBlock(self.embedding_dims, self.embedding_dims, drop_n=drop_n, drop_p=drop_p),
+            CNNBlock(self.embedding_dims, self.embedding_dims, drop_p=drop_p),
             nn.Conv2d(self.embedding_dims, self.output_dim, 1, padding=0),
         )
 
