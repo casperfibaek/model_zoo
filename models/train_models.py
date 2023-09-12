@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torchmetrics
 
-from utils import load_data, training_loop, load_data_ae, TiledMAPE2, TiledMSE
+from utils import load_data, training_loop
 
 
 def train(
@@ -105,10 +105,10 @@ if __name__ == "__main__":
     PATIENCE = 20
     LEARNING_RATE = 0.001
     BATCH_SIZE = 16
-    NAME = "MixerCNN01"
+    NAME = "MIXERV2"
 
-    depths = [3, 3, 3, 3]
-    dims = [32, 48, 64, 80]
+    # depths = [3, 3, 3, 3]
+    # dims = [32, 48, 64, 80]
 
     # from model_Diamond import DiamondNet
     # model = DiamondNet(
@@ -193,15 +193,22 @@ if __name__ == "__main__":
         chw=(10, 64, 64),
         output_dim=1,
         patch_size=4,
-        dim=512,
-        depth=5,
+        dim=256 + 128,
         channel_scale=2,
-        drop_n=0.1,
-        drop_p=0.1,
-        clamp_output=True,
-        clamp_min=0.0,
-        clamp_max=100.0,
+        depth=5,
+        drop_n=0.0,
+        drop_p=0.0,
     )
+
+    # from model_MixerMLP_v2 import MLPMixer
+    # model = MLPMixer(
+    #     chw=(10, 64, 64),
+    #     output_dim=1,
+    #     embedding_dims=32,
+    #     expansion=2,
+    #     drop_n=0.0,
+    #     drop_p=0.0,
+    # )
 
     # from model_DiamondFormer import DiamondFormer
     # model = DiamondFormer(

@@ -88,7 +88,6 @@ def callback_ae(x, y):
     return torch.from_numpy(x), torch.from_numpy(y)
 
 
-
 def load_data(*, x="s2", y="area", with_augmentations=False, num_workers=0, batch_size=16, folder="../data/patches/", encoder_only=False):
     """
     Loads the data from the data folder.

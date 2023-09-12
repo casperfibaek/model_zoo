@@ -237,12 +237,12 @@ class MLPMixer(nn.Module):
                     patch_size=self.patch_size,
                     chw=(self.stem_channels, self.chw[1], self.chw[2]),
                 ),
-                CNNBlock(
-                    self.stem_channels,
-                    self.stem_channels,
-                    drop_n=drop_n,
-                    drop_p=drop_p,
-                ),
+                # CNNBlock(
+                #     self.stem_channels,
+                #     self.stem_channels,
+                #     drop_n=drop_n,
+                #     drop_p=drop_p,
+                # ),
             ) for _ in range(depth)
         ])
         self.skipper = ScaleSkip2D(self.stem_channels, drop_p=drop_p)
@@ -302,12 +302,11 @@ if __name__ == "__main__":
         chw=(10, 64, 64),
         output_dim=10,
         patch_size=4,
-        dim=256,
+        dim=256 + 128,
         channel_scale=2,
-        depth=3,
-        clamp_output=True,
-        clamp_min=0.0,
-        clamp_max=100.0,
+        depth=5,
+        drop_n=0.0,
+        drop_p=0.0,
     )
     model(torch.randn((BATCH_SIZE, CHANNELS, HEIGHT, WIDTH)))
 
