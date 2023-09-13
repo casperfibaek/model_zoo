@@ -99,13 +99,13 @@ if __name__ == "__main__":
     import buteo as beo
     import numpy as np
 
-    NUM_EPOCHS = 100
-    MIN_EPOCHS = 50
+    NUM_EPOCHS = 50
+    MIN_EPOCHS = 25
     WARMUP_EPOCHS = 10
     PATIENCE = 20
     LEARNING_RATE = 0.001
     BATCH_SIZE = 16
-    NAME = "MIXERV2"
+    NAME = "MIXERV8"
 
     # depths = [3, 3, 3, 3]
     # dims = [32, 48, 64, 80]
@@ -188,27 +188,29 @@ if __name__ == "__main__":
     #     num_heads=16,
     # )
 
-    from model_MixerMLP import MLPMixer
-    model = MLPMixer(
-        chw=(10, 64, 64),
-        output_dim=1,
-        patch_size=4,
-        dim=256 + 128,
-        channel_scale=2,
-        depth=5,
-        drop_n=0.0,
-        drop_p=0.0,
-    )
-
-    # from model_MixerMLP_v2 import MLPMixer
+    # from model_MixerMLP import MLPMixer
     # model = MLPMixer(
     #     chw=(10, 64, 64),
     #     output_dim=1,
-    #     embedding_dims=32,
-    #     expansion=2,
+    #     patch_size=4,
+    #     dim=256 + 128,
+    #     channel_scale=2,
+    #     depth=5,
     #     drop_n=0.0,
     #     drop_p=0.0,
     # )
+
+    from model_MixerMLP_v2 import MLPMixer
+    model = MLPMixer(
+        chw=(10, 64, 64),
+        output_dim=1,
+        embedding_dims=[32, 32],
+        patch_sizes=[16, 16],
+        overlaps=[False, True],
+        expansion=2,
+        drop_n=0.0,
+        drop_p=0.0,
+    )
 
     # from model_DiamondFormer import DiamondFormer
     # model = DiamondFormer(
