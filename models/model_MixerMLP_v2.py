@@ -8,15 +8,22 @@ class ScaleSkip2D(nn.Module):
         self.channels = channels
         self.drop_p = drop_p
 
-        self.skipscale = nn.Parameter(torch.ones(1, self.channels, 1, 1))
-        self.skipbias = nn.Parameter(torch.zeros(1, self.channels, 1, 1))
-        self.dropout = nn.Dropout2d(drop_p) if drop_p > 0. else nn.Identity()
+        self.y_skipscale = nn.Parameter(torch.ones(1, self.channels, 1, 1))
+        self.y_skipbias = nn.Parameter(torch.zeros(1, self.channels, 1, 1))
+        self.y_dropout = nn.Dropout2d(drop_p) if drop_p > 0. else nn.Identity()
 
-        torch.nn.init.normal_(self.skipscale, mean=1.0, std=.02)
-        torch.nn.init.normal_(self.skipbias, mean=0.0, std=.02)
+        self.x_skipscale = nn.Parameter(torch.ones(1, self.channels, 1, 1))
+        self.x_skipbias = nn.Parameter(torch.zeros(1, self.channels, 1, 1))
+        self.x_dropout = nn.Dropout2d(drop_p) if drop_p > 0. else nn.Identity()
+
+        torch.nn.init.normal_(self.y_skipscale, mean=1.0, std=.02)
+        torch.nn.init.normal_(self.y_skipbias, mean=0.0, std=.02)
+        torch.nn.init.normal_(self.x_skipscale, mean=1.0, std=.02)
+        torch.nn.init.normal_(self.x_skipbias, mean=0.0, std=.02)
 
     def forward(self, x, skip_connection):
-        y = self.skipscale * self.dropout(skip_connection) + self.skipbias
+        y = self.y_skipscale * self.y_dropout(skip_connection) + self.y_skipbias
+        x = self.x_skipscale * self.x_dropout(x) + self.x_skipbias
 
         return x + y
 
@@ -112,57 +119,74 @@ class MLPMixerLayer(nn.Module):
         if self.offset:
             self.chw = (chw[0], chw[1] + self.patch_size, chw[2] + self.patch_size)
 
-        self.num_patches = (self.chw[1] // self.patch_size) * (self.chw[2] // self.patch_size)
-        self.pixels =  round((self.chw[1] * self.chw[2]) / self.num_patches)
+        self.num_patches_height = self.chw[1] // self.patch_size
+        self.num_patches_width = self.chw[2] // self.patch_size
+        self.num_patches = self.num_patches_height * self.num_patches_width
+        self.tokens = round((self.chw[1] * self.chw[2]) / self.num_patches)
+
+        star = True
+        rms = True
 
         self.mix_channel = nn.Sequential(
-            RMSNorm(self.embed_dims),
+            RMSNorm(self.embed_dims) if rms else nn.LayerNorm(self.embed_dims),
             nn.Linear(self.embed_dims, int(self.embed_dims * self.expansion)),
-            StarReLU(),
+            StarReLU() if star else nn.ReLU(),
             nn.Linear(int(self.embed_dims * self.expansion), self.embed_dims),
             nn.Dropout(drop_n) if drop_n > 0. else nn.Identity(),
         )
 
         self.mix_patch = nn.Sequential(
-            RMSNorm(self.num_patches),
+            RMSNorm(self.num_patches) if rms else nn.LayerNorm(self.num_patches),
             nn.Linear(self.num_patches, int(self.num_patches * self.expansion)),
-            StarReLU(),
+            StarReLU() if star else nn.ReLU(),
             nn.Linear(int(self.num_patches * self.expansion), self.num_patches),
             nn.Dropout(drop_n) if drop_n > 0. else nn.Identity(),
         )
 
         self.mix_token = nn.Sequential(
-            RMSNorm(self.pixels),
-            nn.Linear(self.pixels, int(self.pixels * self.expansion)),
-            StarReLU(),
-            nn.Linear(int(self.pixels * self.expansion), self.pixels),
+            RMSNorm(self.tokens) if rms else nn.LayerNorm(self.tokens),
+            nn.Linear(self.tokens, int(self.tokens * self.expansion)),
+            StarReLU() if star else nn.ReLU(),
+            nn.Linear(int(self.tokens * self.expansion), self.tokens),
             nn.Dropout(drop_n) if drop_n > 0. else nn.Identity(),
         )
 
         self.mix_local = nn.Sequential(
             nn.BatchNorm3d(self.num_patches),
             nn.Conv3d(self.num_patches, self.num_patches, kernel_size=3, stride=1, padding="same", groups=self.num_patches),
-            StarReLU(),
+            StarReLU() if star else nn.ReLU(),
         )
 
+
     def patchify_batch(self, tensor):
-        tile_size = self.patch_size
-        B, C, H, W = tensor.shape
+        B, C, _H, _W = tensor.shape
+        patch_size = self.patch_size
+        num_patches_height = self.num_patches_height
+        num_patches_width = self.num_patches_width
+        num_patches = self.num_patches
 
-        tensor = tensor.unfold(2, tile_size, tile_size).unfold(3, tile_size, tile_size)
-        tensor = tensor.reshape(B, C, H // tile_size * W // tile_size, tile_size * tile_size)
+        # Reshape and extract patches
+        reshaped = tensor.reshape(B, C, num_patches_height, patch_size, num_patches_width, patch_size)
+        transposed = reshaped.permute(0, 2, 4, 1, 3, 5)
+        final_patches = transposed.reshape(B, num_patches, C, patch_size ** 2)
 
-        return tensor
-    
-    def unpatchify_batch(self, tensor):
-        B, C, _, _ = tensor.shape
-        H, W = self.chw[1], self.chw[2]
-        tile_size = self.patch_size
+        return final_patches
 
-        tensor = tensor.reshape(B, C, H // tile_size, W // tile_size, tile_size, tile_size)
-        tensor = tensor.reshape(B, C, H, W)
 
-        return tensor
+    def unpatchify_batch(self, patches):
+        B, _P, C, _T = patches.shape
+        _C, H, W = self.chw
+        patch_size = self.patch_size
+        num_patches_height = self.num_patches_height
+        num_patches_width = self.num_patches_width
+
+
+        # Reverse the patchify process
+        reshaped = patches.reshape(B, num_patches_height, num_patches_width, C, patch_size, patch_size)
+        transposed = reshaped.permute(0, 3, 1, 4, 2, 5)
+        final_tensor = transposed.reshape(B, C, H, W)
+
+        return final_tensor
 
 
     def forward(self, x):
@@ -172,24 +196,24 @@ class MLPMixerLayer(nn.Module):
             x = torch.nn.functional.pad(x, (self.patch_size // 2, self.patch_size // 2, self.patch_size // 2, self.patch_size // 2), mode="constant", value=0)
 
         x = self.patchify_batch(x)
-        # x: Batch, Channels, Num_Patches, Patch_Size * Patch_Size
+        # x: batch, num_Patches, channels, patch_Size * patch_Size
 
-        mix_channel = x.transpose(1, 3).transpose(1, 2)
+        mix_channel = x.transpose(2, 3)
         mix_channel = self.mix_channel(mix_channel)
-        mix_channel = mix_channel.transpose(1, 2).transpose(1, 3)
+        mix_channel = mix_channel.transpose(2, 3)
         x = x + mix_channel
 
-        mix_patch = x.transpose(2, 3)
+        mix_patch = x.transpose(1, 3)
         mix_patch = self.mix_patch(mix_patch)
-        mix_patch = mix_patch.transpose(2, 3)
+        mix_patch = mix_patch.transpose(1, 3)
         x = x + mix_patch
 
         mix_token = self.mix_token(x)
         x = x + mix_token
 
-        mix_local = x.transpose(1, 2).reshape(B, self.num_patches, C, self.patch_size, self.patch_size)
+        mix_local = x.reshape(B, self.num_patches, C, self.patch_size, self.patch_size)
         mix_local = self.mix_local(mix_local)
-        mix_local = mix_local.transpose(1, 2).reshape(B, C, self.num_patches, self.patch_size * self.patch_size)
+        mix_local = mix_local.reshape(B, self.num_patches, C, int(self.patch_size ** 2))
         x = x + mix_local
 
         x = self.unpatchify_batch(x)
@@ -205,9 +229,9 @@ class MLPMixer(nn.Module):
     def __init__(self,
         chw,
         output_dim,
-        embedding_dims=[32, 32],
-        patch_sizes=[16, 16],
-        overlaps=[False, True],
+        embedding_dims=[16, 16, 16],
+        patch_sizes=[8, 4, 2],
+        overlaps=[False, False, False],
         expansion=2,
         drop_n=0.0,
         drop_p=0.0,
@@ -229,6 +253,7 @@ class MLPMixer(nn.Module):
         assert len(self.embedding_dims) == len(self.patch_sizes) == len(self.overlaps), "embedding_dims, patch_sizes, and overlaps must be the same length."
 
         self.stem = nn.Sequential(
+            # nn.Conv2d(self.chw[0], self.embedding_dims[0], 1, padding=0),
             CNNBlock(chw[0], self.embedding_dims[0]),
             CNNBlock(self.embedding_dims[0], self.embedding_dims[0]),
             CNNBlock(self.embedding_dims[0], self.embedding_dims[0]),

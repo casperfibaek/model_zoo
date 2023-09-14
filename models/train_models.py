@@ -104,8 +104,9 @@ if __name__ == "__main__":
     WARMUP_EPOCHS = 10
     PATIENCE = 20
     LEARNING_RATE = 0.001
+    LEARNING_RATE_END = 0.00001
     BATCH_SIZE = 16
-    NAME = "MIXERV8"
+    NAME = "MixerV17LargeWCNN"
 
     # depths = [3, 3, 3, 3]
     # dims = [32, 48, 64, 80]
@@ -204,12 +205,15 @@ if __name__ == "__main__":
     model = MLPMixer(
         chw=(10, 64, 64),
         output_dim=1,
-        embedding_dims=[32, 32],
-        patch_sizes=[16, 16],
-        overlaps=[False, True],
-        expansion=2,
-        drop_n=0.0,
-        drop_p=0.0,
+        # embedding_dims=[32, 32],
+        # patch_sizes=[16, 16],
+        # overlaps=[False, True],
+        # embedding_dims=[32, 32, 32, 32, 32],
+        # patch_sizes=[16, 16, 8, 4, 2],
+        # overlaps=[False, True, False, False, False],
+        # expansion=2,
+        # drop_n=0.0,
+        # drop_p=0.0,
     )
 
     # from model_DiamondFormer import DiamondFormer
