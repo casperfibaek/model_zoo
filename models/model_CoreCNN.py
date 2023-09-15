@@ -152,7 +152,7 @@ class CoreDecoderBlock(nn.Module):
 
         self.blocks = nn.Sequential(*self.blocks)
     
-    def forward(self, x, skip): # y is the skip connection
+    def forward(self, x, skip):
         x = self.upsample(x)
         attn_s, attn_c = self.attention(x, skip)
         x = torch.cat([x, (skip * attn_s) + (skip + attn_c)], dim=1)
