@@ -27,7 +27,7 @@ def train(
         x="s2",
         y="area",
         with_augmentations=True,
-        num_workers=0,
+        num_workers=8,
         batch_size=batch_size,
         encoder_only=False,
     )
@@ -106,78 +106,19 @@ if __name__ == "__main__":
     LEARNING_RATE = 0.001
     LEARNING_RATE_END = 0.00001
     BATCH_SIZE = 16
-    NAME = "MixerV17LargeWCNN"
+    NAME = "NanoUnetCNN01"
 
-    # depths = [3, 3, 3, 3]
-    # dims = [32, 48, 64, 80]
-
-    # from model_Diamond import DiamondNet
-    # model = DiamondNet(
+    from model_CoreCNN_versions import CoreUnet_nano
+    # model = CoreUnet_nano(
     #     input_dim=10,
     #     output_dim=1,
-    #     input_size=64,
-    #     depths=depths,
-    #     dims=dims,
-    #     clamp_output=True,
-    #     clamp_min=0.0,
-    #     clamp_max=100.0,
     # )
 
-    # from model_ResNet import ResNet
-    # model = ResNet(
-    #     input_dim=10,
-    #     output_dim=1,
-    #     depths=depths,
-    #     dims=dims,
-    #     clamp_output=True,
-    #     clamp_min=0.0,
-    #     clamp_max=100.0,
-    # )
-
-    # from model_CoreCNN import CoreUnet
-    # model = CoreUnet(
-    #     input_dim=10,
-    #     output_dim=1,
-    #     clamp_output=True,
-    #     depths=depths,
-    #     dims=dims,
-    #     clamp_min=0.0,
-    #     clamp_max=100.0,
-    #     activation="relu",
-    # )
-
-    # from model_SENet import SENet
-    # model = SENet(
-    #     input_dim=10,
-    #     output_dim=1,
-    #     clamp_output=True,
-    #     depths=depths,
-    #     dims=dims,
-    #     clamp_min=0.0,
-    #     clamp_max=100.0,
-    #     activation="relu",
-    # )
-
-    # from model_ConvNextV2 import ConvNextV2
-    # model = ConvNextV2(
-    #     input_dim=10,
-    #     output_dim=1,
-    #     clamp_output=True,
-    #     depths=depths,
-    #     dims=dims,
-    #     clamp_min=0.0,
-    #     clamp_max=100.0,
-    # )
-
-    # from model_vit import ViT
-    # model = ViT(
-    #     bchw=(BATCH_SIZE, 10, 64, 64),
-    #     output_dim=1,
-    #     patch_size=4,
-    #     embed_dim=1024,
-    #     n_layers=5,
-    #     n_heads=16,
-    # )
+    from models.model_Mixer_versions import Mixer_nano
+    model = Mixer_nano(
+        chw=(10, 64, 64),
+        output_dim=1,
+    )
 
     # from model_VisionTransformer import ViT
     # model = ViT(
@@ -187,57 +128,6 @@ if __name__ == "__main__":
     #     embed_dim=768,
     #     depth=3,
     #     num_heads=16,
-    # )
-
-    # from model_MixerMLP import MLPMixer
-    # model = MLPMixer(
-    #     chw=(10, 64, 64),
-    #     output_dim=1,
-    #     patch_size=4,
-    #     dim=256 + 128,
-    #     channel_scale=2,
-    #     depth=5,
-    #     drop_n=0.0,
-    #     drop_p=0.0,
-    # )
-
-    from model_MixerMLP_v2 import MLPMixer
-    model = MLPMixer(
-        chw=(10, 64, 64),
-        output_dim=1,
-        # embedding_dims=[32, 32],
-        # patch_sizes=[16, 16],
-        # overlaps=[False, True],
-        # embedding_dims=[32, 32, 32, 32, 32],
-        # patch_sizes=[16, 16, 8, 4, 2],
-        # overlaps=[False, True, False, False, False],
-        # expansion=2,
-        # drop_n=0.0,
-        # drop_p=0.0,
-    )
-
-    # from model_DiamondFormer import DiamondFormer
-    # model = DiamondFormer(
-    #     chw=(10, 64, 64),
-    #     output_dim=1,
-    #     patch_size=8,
-    #     # embed_dim=1024,
-    #     # clamp_output=True,
-    #     # clamp_min=0.0,
-    #     # clamp_max=100.0,
-    # )
-
-    # from model_MetaFormer import MetaFormer
-    # model = MetaFormer(
-    #     chw=(10, 64, 64),
-    #     output_dim=1,
-    #     patch_size=8,
-    #     depth=5,
-    #     embed_dim=512,
-    #     embed_channels=64,
-    #     clamp_output=True,
-    #     clamp_min=0.0,
-    #     clamp_max=100.0,
     # )
 
     train(

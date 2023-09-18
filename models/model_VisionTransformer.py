@@ -97,7 +97,6 @@ class ViT(nn.Module):
         x = x[:, 1:, :]
 
         x = self.unpatchify_batch(x)
-        x = torch.clamp(x, 0.0, 100.0)
 
         return x
 

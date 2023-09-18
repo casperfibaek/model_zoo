@@ -180,16 +180,10 @@ def training_loop(
                     best_loss = val_loss
                     best_model_state = model.state_dict().copy()
 
-                    if predict_func is not None and epoch >= warmup_epochs:
-                        predict_func(model, epoch_current)
-
                 elif best_loss > val_loss:
                     best_epoch = epoch_current
                     best_loss = val_loss
                     best_model_state = model.state_dict().copy()
-
-                    if predict_func is not None and epoch >= warmup_epochs:
-                        predict_func(model, epoch_current)
 
                     epochs_no_improve = 0
                 else:
@@ -200,13 +194,21 @@ def training_loop(
             print(f'Early stopping triggered after {epoch_current} epochs.')
             break
 
+
     # Load the best weights
     model.load_state_dict(best_model_state)
 
+    model.eval()
+
     print("Finished Training. Best epoch: ", best_epoch)
     print("")
+
+    if predict_func is not None:
+        print("Generating prediction..")
+        predict_func(model, epoch_current)
+        print("")
+
     print("Starting Testing... (Best val epoch).")
-    model.eval()
 
     # Test the model
     with torch.no_grad():

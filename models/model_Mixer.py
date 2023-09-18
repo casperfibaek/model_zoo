@@ -96,7 +96,7 @@ class MLPMixerLayer(nn.Module):
         self.mix_channel = nn.Sequential(
             nn.LayerNorm(self.embed_dims),
             nn.Linear(self.embed_dims, int(self.embed_dims * self.expansion)),
-            nn.ReLU(),
+            nn.GELU(),
             nn.Linear(int(self.embed_dims * self.expansion), self.embed_dims),
             nn.Dropout(drop_n) if drop_n > 0. else nn.Identity(),
         )
@@ -104,7 +104,7 @@ class MLPMixerLayer(nn.Module):
         self.mix_patch = nn.Sequential(
             nn.LayerNorm(self.num_patches),
             nn.Linear(self.num_patches, int(self.num_patches * self.expansion)),
-            nn.ReLU(),
+            nn.GELU(),
             nn.Linear(int(self.num_patches * self.expansion), self.num_patches),
             nn.Dropout(drop_n) if drop_n > 0. else nn.Identity(),
         )
@@ -112,7 +112,7 @@ class MLPMixerLayer(nn.Module):
         self.mix_token = nn.Sequential(
             nn.LayerNorm(self.tokens),
             nn.Linear(self.tokens, int(self.tokens * self.expansion)),
-            nn.ReLU(),
+            nn.GELU(),
             nn.Linear(int(self.tokens * self.expansion), self.tokens),
             nn.Dropout(drop_n) if drop_n > 0. else nn.Identity(),
         )
@@ -171,17 +171,18 @@ class MLPMixerLayer(nn.Module):
         return x
 
 
-class MLPMixer(nn.Module):
+class Mixer(nn.Module):
     def __init__(self,
         chw,
         output_dim,
-        embedding_dims=[32, 32, 32],
-        patch_sizes=[8, 4, 2],
+        embedding_dims=[64, 64, 64, 64],
+        patch_sizes=[16, 8, 4, 2],
         expansion=2,
         drop_n=0.1,
         drop_p=0.1,
+        softmax_output=False,
     ):
-        super(MLPMixer, self).__init__()
+        super(Mixer, self).__init__()
         self.chw = chw
         self.output_dim = output_dim
         self.embedding_dims = embedding_dims
@@ -190,6 +191,7 @@ class MLPMixer(nn.Module):
         self.drop_n = drop_n
         self.drop_p = drop_p
         self.std = .02
+        self.softmax_output = softmax_output
         self.class_boundary = max(patch_sizes)
 
         assert isinstance(self.embedding_dims, list), "embedding_dims must be a list."
@@ -197,7 +199,7 @@ class MLPMixer(nn.Module):
         assert len(self.embedding_dims) == len(self.patch_sizes), "embedding_dims and patch_sizes must be the same length."
 
         self.stem = nn.Sequential(
-            CNNBlock(chw[0], self.embedding_dims[0]),
+            CNNBlock(chw[0], self.embedding_dims[0], apply_residual=False),
             CNNBlock(self.embedding_dims[0], self.embedding_dims[0]),
             CNNBlock(self.embedding_dims[0], self.embedding_dims[0]),
         )
@@ -244,6 +246,7 @@ class MLPMixer(nn.Module):
 
         self.head = nn.Sequential(
             CNNBlock(self.embedding_dims[-1], self.embedding_dims[-1]),
+            CNNBlock(self.embedding_dims[-1], self.embedding_dims[-1]),
             nn.Conv2d(self.embedding_dims[-1], self.output_dim, 1, padding=0),
         )
 
@@ -259,7 +262,7 @@ class MLPMixer(nn.Module):
 
     def forward(self, identity):
         skip = self.stem(identity)
-        skip = torch.nn.functional.pad(skip, (0, 0, self.class_boundary, 0), mode="constant", value=1.0)
+        skip = torch.nn.functional.pad(skip, (0, 0, self.class_boundary, 0), mode="constant", value=0.0)
 
         x = skip
 
@@ -277,7 +280,8 @@ class MLPMixer(nn.Module):
 
         x = self.head(x)
 
-        x = torch.softmax(x, dim=1)
+        if self.softmax_output:
+            x = torch.softmax(x, dim=1)
 
         return x
 
@@ -292,7 +296,7 @@ if __name__ == "__main__":
 
     torch.set_default_device("cuda")
 
-    model = MLPMixer(
+    model = Mixer(
         chw=(10, 64, 64),
         output_dim=1,
         # embedding_dims=32,

@@ -1,18 +1,14 @@
-import sys; sys.path.append("../")
 import torch
 import torch.nn as nn
 from utils import get_activation, get_normalization
 
 
 class BaselineNet(nn.Module):
-    def __init__(self, *, input_dim=10, output_dim=1, clamp_output=False, clamp_min=0.0, clamp_max=1.0, activation="relu", norm="batch", padding="same"):
+    def __init__(self, *, input_dim=10, output_dim=1, activation="relu", norm="batch", padding="same"):
         super(BaselineNet, self).__init__()
 
         self.output_dim = output_dim
         self.input_dim = input_dim
-        self.clamp_output = clamp_output
-        self.clamp_min = clamp_min
-        self.clamp_max = clamp_max
         self.activation = activation
         self.norm = norm
         self.padding = padding
@@ -50,9 +46,6 @@ class BaselineNet(nn.Module):
 
     def forward(self, x):
         x = self.net(x)
-
-        if self.clamp_output:
-            x = torch.clamp(x, self.clamp_min, self.clamp_max)
 
         return x
 

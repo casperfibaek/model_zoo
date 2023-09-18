@@ -306,7 +306,7 @@ if __name__ == "__main__":
     HEIGHT = 128
     WIDTH = 128
 
-    model = ResNetUnet_pico(
+    model = ResNetUnet_atto(
         input_dim=10,
         output_dim=1,
         stem_kernel_size=5,
