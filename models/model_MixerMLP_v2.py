@@ -259,7 +259,7 @@ class MLPMixer(nn.Module):
 
     def forward(self, identity):
         skip = self.stem(identity)
-        skip = torch.nn.functional.pad(skip, (0, 0, self.class_boundary, 0), mode="constant", value=0.0)
+        skip = torch.nn.functional.pad(skip, (0, 0, self.class_boundary, 0), mode="constant", value=1.0)
 
         x = skip
 
