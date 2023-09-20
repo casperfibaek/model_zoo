@@ -5,73 +5,105 @@ import torch.nn as nn
 class ScaleSkip2D(nn.Module):
     def __init__(self, channels, drop_p=0.1):
         super(ScaleSkip2D, self).__init__()
+
         self.channels = channels
-        self.drop_p = drop_p
 
         self.y_skipscale = nn.Parameter(torch.ones(1, self.channels, 1, 1))
         self.y_skipbias = nn.Parameter(torch.zeros(1, self.channels, 1, 1))
-        self.y_dropout = nn.Dropout2d(drop_p) if drop_p > 0. else nn.Identity()
-
+        
         self.x_skipscale = nn.Parameter(torch.ones(1, self.channels, 1, 1))
         self.x_skipbias = nn.Parameter(torch.zeros(1, self.channels, 1, 1))
-        self.x_dropout = nn.Dropout2d(drop_p) if drop_p > 0. else nn.Identity()
 
-        torch.nn.init.normal_(self.y_skipscale, mean=1.0, std=.02)
-        torch.nn.init.normal_(self.y_skipbias, mean=0.0, std=.02)
-        torch.nn.init.normal_(self.x_skipscale, mean=1.0, std=.02)
-        torch.nn.init.normal_(self.x_skipbias, mean=0.0, std=.02)
+        if drop_p > 0.:
+            self.dropout = nn.Dropout2d(drop_p)
+        else:
+            self.dropout = None
 
-    def forward(self, x, skip_connection):
-        y = self.y_skipscale * self.y_dropout(skip_connection) + self.y_skipbias
-        x = self.x_skipscale * self.x_dropout(x) + self.x_skipbias
+    def forward(self, x, y):
+        if self.dropout:
+            x = self.dropout(x)
+            y = self.dropout(y)
 
+        y = self.y_skipscale * y + self.y_skipbias
+        x = self.x_skipscale * x + self.x_skipbias
+        
         return x + y
 
 
 class CNNBlock(nn.Module):
-    def __init__(self,
-        in_channels,
-        out_channels,
-        *,
-        apply_residual=True,
-    ):
+    def __init__(self, in_channels, out_channels, *, apply_residual=True):
         super(CNNBlock, self).__init__()
 
-        self.apply_residual = apply_residual
-        self.in_channels = in_channels
+        self.apply_residual = apply_residual and in_channels == out_channels
         self.out_channels = out_channels
 
-        self.activation1 = nn.ReLU()
-        self.activation2 = nn.ReLU()
-        self.activation3 = nn.ReLU()
+        self.norm1 = nn.BatchNorm2d(out_channels)
+        self.norm2 = nn.BatchNorm2d(out_channels)
 
-        self.norm1 = nn.BatchNorm2d(self.out_channels)
-        self.norm2 = nn.BatchNorm2d(self.out_channels)
-        self.norm3 = nn.BatchNorm2d(self.out_channels)
-        self.norm4 = nn.BatchNorm2d(self.out_channels)
+        self.conv1 = nn.Conv2d(in_channels, out_channels, 1, padding=0, bias=False)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, 3, padding=1, groups=out_channels, bias=False)
+        self.conv3 = nn.Conv2d(out_channels, out_channels, 3, padding=1, groups=1, bias=False)
 
-        self.conv1 = nn.Conv2d(self.in_channels, self.out_channels, 1, padding=0, bias=False)
-        self.conv2 = nn.Conv2d(self.out_channels, self.out_channels, 3, padding="same", groups=self.out_channels, bias=False)
-        self.conv3 = nn.Conv2d(self.out_channels, self.out_channels, 3, padding="same", groups=1, bias=False)
+        self.activation = nn.ReLU6()
 
-        if self.apply_residual and in_channels != out_channels:
+        if in_channels != out_channels:
             self.match_channels = nn.Conv2d(in_channels, out_channels, kernel_size=1, padding=0, bias=False)
+            self.match_norm = nn.BatchNorm2d(out_channels)
+        else:
+            self.match_channels = None
 
     def forward(self, x):
         identity = x
-        x = self.activation1(self.norm1(self.conv1(x)))
-        x = self.activation2(self.norm2(self.conv2(x)))
-        x = self.norm3(self.conv3(x))
+        
+        x = self.conv1(x)
+        x = self.norm1(x)
+        x = self.activation(x)
+
+        x = self.conv2(x)
+        x = self.norm2(x)
+        x = self.activation(x)
+
+        x = self.conv3(x)
+
+        if self.match_channels:
+            identity = self.match_channels(identity)
+            identity = self.match_norm(identity)
 
         if self.apply_residual:
-            if x.size(1) != identity.size(1):
-                identity = self.norm4(self.match_channels(identity))
-
             x = identity + x
 
-        x = self.activation3(x)
+        x = self.activation(x)
 
         return x
+
+
+class CustomBatchNorm(nn.Module):
+    def __init__(self, features, momentum=0.1, eps=1e-5):
+        super(CustomBatchNorm, self).__init__()
+
+        self.weight = nn.Parameter(torch.ones(1, 1, 1, features, device="cuda"))
+        self.bias = nn.Parameter(torch.zeros(1, 1, 1, features, device="cuda"))
+
+        self.register_buffer('running_mean', torch.zeros(1, 1, 1, features, device="cuda"))
+        self.register_buffer('running_var', torch.ones(1, 1, 1, features, device="cuda"))
+        
+        self.momentum = momentum
+        self.eps = eps
+
+    def forward(self, x):
+        # If in training mode, update the running statistics
+        if self.training:
+            mean = x.mean(dim=(0, 1, 2), keepdim=True)
+            var = x.var(dim=(0, 1, 2), unbiased=False, keepdim=True)
+            self.running_mean = (1 - self.momentum) * self.running_mean + self.momentum * mean
+            self.running_var = (1 - self.momentum) * self.running_var + self.momentum * var
+        else:
+            mean = self.running_mean
+            var = self.running_var
+
+        x_normalized = (x - mean) / (torch.sqrt(var + self.eps))
+        
+        return (x_normalized * self.weight) + self.bias
 
 
 class MLPMixerLayer(nn.Module):
@@ -93,29 +125,43 @@ class MLPMixerLayer(nn.Module):
         self.num_patches = self.num_patches_height * self.num_patches_width
         self.tokens = round((self.chw[1] * self.chw[2]) / self.num_patches)
 
+        # x: batch, num_Patches, patch_Size ** 2, channels
         self.mix_channel = nn.Sequential(
-            nn.LayerNorm(self.embed_dims),
+            CustomBatchNorm(self.embed_dims),
             nn.Linear(self.embed_dims, int(self.embed_dims * self.expansion)),
-            nn.GELU(),
+            nn.ReLU6(),
             nn.Linear(int(self.embed_dims * self.expansion), self.embed_dims),
             nn.Dropout(drop_n) if drop_n > 0. else nn.Identity(),
         )
 
+        # x: batch, patch_Size ** 2, channels, num_Patches
         self.mix_patch = nn.Sequential(
-            nn.LayerNorm(self.num_patches),
+            CustomBatchNorm(self.num_patches),
             nn.Linear(self.num_patches, int(self.num_patches * self.expansion)),
-            nn.GELU(),
+            nn.ReLU6(),
             nn.Linear(int(self.num_patches * self.expansion), self.num_patches),
             nn.Dropout(drop_n) if drop_n > 0. else nn.Identity(),
         )
 
+        # x: batch, num_Patches, channels, patch_Size ** 2
         self.mix_token = nn.Sequential(
-            nn.LayerNorm(self.tokens),
+            CustomBatchNorm(self.tokens),
             nn.Linear(self.tokens, int(self.tokens * self.expansion)),
-            nn.GELU(),
+            nn.ReLU6(),
             nn.Linear(int(self.tokens * self.expansion), self.tokens),
             nn.Dropout(drop_n) if drop_n > 0. else nn.Identity(),
         )
+
+        self.bn1 = nn.BatchNorm2d(self.embed_dims)
+        self.bn2 = nn.BatchNorm2d(self.embed_dims)
+        self.bn3 = nn.BatchNorm2d(self.embed_dims)
+
+    def apply_bn(self, x, bn_func):
+        x_reshaped = x.transpose(1, 2)
+        x_normalized = bn_func(x_reshaped)
+        x_out = x_normalized.transpose(1, 2)
+
+        return x_out
 
 
     def patchify_batch(self, tensor):
@@ -152,16 +198,19 @@ class MLPMixerLayer(nn.Module):
         x = self.patchify_batch(x)
         # x: batch, num_Patches, channels, patch_Size * patch_Size
 
+        x = self.apply_bn(x, self.bn1)
         mix_channel = x.transpose(2, 3)
         mix_channel = self.mix_channel(mix_channel)
         mix_channel = mix_channel.transpose(2, 3)
         x = x + mix_channel
 
+        x = self.apply_bn(x, self.bn2)
         mix_patch = x.transpose(1, 3)
         mix_patch = self.mix_patch(mix_patch)
         mix_patch = mix_patch.transpose(1, 3)
         x = x + mix_patch
 
+        x = self.apply_bn(x, self.bn3)
         mix_token = self.mix_token(x)
         x = x + mix_token
 
@@ -178,8 +227,8 @@ class Mixer(nn.Module):
         embedding_dims=[64, 64, 64, 64],
         patch_sizes=[16, 8, 4, 2],
         expansion=2,
-        drop_n=0.1,
-        drop_p=0.1,
+        drop_n=0.0,
+        drop_p=0.0,
         softmax_output=False,
     ):
         super(Mixer, self).__init__()
@@ -288,6 +337,7 @@ class Mixer(nn.Module):
 
 if __name__ == "__main__":
     from torchinfo import summary
+    from torch.utils import bottleneck
 
     BATCH_SIZE = 16
     CHANNELS = 10
@@ -299,12 +349,15 @@ if __name__ == "__main__":
     model = Mixer(
         chw=(10, 64, 64),
         output_dim=1,
+        # embedding_dims=[32, 32],
+        # patch_sizes=[16, 8],
         # embedding_dims=32,
         # expansion=2,
         # drop_n=0.0,
         # drop_p=0.0,
     )
-    model(torch.randn((BATCH_SIZE, CHANNELS, HEIGHT, WIDTH)))
+
+    # model(torch.randn((BATCH_SIZE, CHANNELS, HEIGHT, WIDTH)))
 
     summary(
         model,

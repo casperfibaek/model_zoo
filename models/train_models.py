@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torchmetrics
 
-from utils import load_data, training_loop
+from utils import load_data, training_loop, TiledMSE
 
 
 def train(
@@ -41,8 +41,8 @@ def train(
         learning_rate=learning_rate,
         learning_rate_end=learning_rate_end,
         model=model,
-        criterion=nn.MSELoss(),
-        # criterion=TiledMSE(bias=0.8),
+        # criterion=nn.MSELoss(),
+        criterion=TiledMSE(bias=0.5),
         device=device,
         metrics=[
             mse.to(device),
@@ -98,6 +98,22 @@ if __name__ == "__main__":
     import warnings; warnings.filterwarnings("ignore", category=UserWarning)
     import buteo as beo
     import numpy as np
+    import logging
+    import os
+    import sys
+
+    # class StreamToLogger:
+    #     def __init__(self, logger, log_level=logging.INFO):
+    #         self.logger = logger
+    #         self.log_level = log_level
+    #         self.linebuf = ''
+
+    #     def write(self, buf):
+    #         for line in buf.rstrip().splitlines():
+    #             self.logger.log(self.log_level, line.rstrip())
+
+    #     def flush(self):
+    #         pass
 
     NUM_EPOCHS = 50
     MIN_EPOCHS = 25
@@ -106,19 +122,38 @@ if __name__ == "__main__":
     LEARNING_RATE = 0.001
     LEARNING_RATE_END = 0.00001
     BATCH_SIZE = 16
-    NAME = "NanoUnetCNN01"
+    NAME = "MixerNano04"
 
-    from model_CoreCNN_versions import CoreUnet_nano
+    # log_format = '%(asctime)s - %(message)s'
+    # logging.basicConfig(filename=os.path.join("../logs/", f"{NAME}.log"), level=logging.INFO, format=log_format)
+    # logger = logging.getLogger()
+
+    # stdout_logger = logging.getLogger('STDOUT')
+    # sl = StreamToLogger(stdout_logger, logging.INFO)
+    # sys.stdout = sl
+
+    # stderr_logger = logging.getLogger('STDERR')
+    # sl = StreamToLogger(stderr_logger, logging.ERROR)
+    # sys.stderr = sl
+
+    # import gc; gc.collect()
+    # torch.cuda.empty_cache()
+
+    # from model_CoreCNN_versions import CoreUnet_nano
     # model = CoreUnet_nano(
     #     input_dim=10,
     #     output_dim=1,
     # )
 
+
     from models.model_Mixer_versions import Mixer_nano
     model = Mixer_nano(
         chw=(10, 64, 64),
         output_dim=1,
+        drop_n=0.0,
+        drop_p=0.0,
     )
+    # model = torch.compile(model)
 
     # from model_VisionTransformer import ViT
     # model = ViT(

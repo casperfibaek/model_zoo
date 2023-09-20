@@ -132,7 +132,7 @@ if __name__ == "__main__":
 
     torch.set_default_device("cuda")
 
-    model = Mixer_huge(chw=(10, 64, 64), output_dim=1)
+    model = Mixer_nano(chw=(10, 64, 64), output_dim=1)
 
     summary(
         model,

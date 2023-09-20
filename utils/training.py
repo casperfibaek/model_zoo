@@ -113,6 +113,7 @@ def training_loop(
         train_pbar = tqdm(train_loader, total=len(train_loader), desc=f"Epoch {epoch_current}/{epoch_max}")
 
         for i, (images, labels) in enumerate(train_pbar):
+        # for i, (images, labels) in enumerate(train_loader):
             # Move inputs and targets to the device (GPU)
             images, labels = images.to(device), labels.to(device)
 
@@ -188,6 +189,12 @@ def training_loop(
                     epochs_no_improve = 0
                 else:
                     epochs_no_improve += 1
+
+                # print(f"Epoch {epoch_current}/{epoch_max} - {loss_dict_str}")
+
+                # train_pbar.update(loss_dict_str)
+                # train_pbar.disable = False
+                # train_pbar.refresh()
 
         # Early stopping
         if epochs_no_improve == patience and epoch >= warmup_epochs and epoch_current >= min_epochs + patience:
