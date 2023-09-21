@@ -77,35 +77,6 @@ class CNNBlock(nn.Module):
         return x
 
 
-class CustomBatchNorm(nn.Module):
-    def __init__(self, features, momentum=0.1, eps=1e-5):
-        super(CustomBatchNorm, self).__init__()
-
-        self.weight = nn.Parameter(torch.ones(1, 1, 1, features, device="cuda"))
-        self.bias = nn.Parameter(torch.zeros(1, 1, 1, features, device="cuda"))
-
-        self.register_buffer('running_mean', torch.zeros(1, 1, 1, features, device="cuda"))
-        self.register_buffer('running_var', torch.ones(1, 1, 1, features, device="cuda"))
-        
-        self.momentum = momentum
-        self.eps = eps
-
-    def forward(self, x):
-        # If in training mode, update the running statistics
-        if self.training:
-            mean = x.mean(dim=(0, 1, 2), keepdim=True)
-            var = x.var(dim=(0, 1, 2), unbiased=False, keepdim=True)
-            self.running_mean = (1 - self.momentum) * self.running_mean + self.momentum * mean
-            self.running_var = (1 - self.momentum) * self.running_var + self.momentum * var
-        else:
-            mean = self.running_mean
-            var = self.running_var
-
-        x_normalized = (x - mean) / (torch.sqrt(var + self.eps))
-        
-        return (x_normalized * self.weight) + self.bias
-
-
 class MLPMixerLayer(nn.Module):
     def __init__(self,
         embed_dims,
@@ -126,42 +97,31 @@ class MLPMixerLayer(nn.Module):
         self.tokens = round((self.chw[1] * self.chw[2]) / self.num_patches)
 
         # x: batch, num_Patches, patch_Size ** 2, channels
+        self.bn1 = nn.BatchNorm2d(self.num_patches)
         self.mix_channel = nn.Sequential(
-            CustomBatchNorm(self.embed_dims),
             nn.Linear(self.embed_dims, int(self.embed_dims * self.expansion)),
             nn.ReLU6(),
             nn.Linear(int(self.embed_dims * self.expansion), self.embed_dims),
             nn.Dropout(drop_n) if drop_n > 0. else nn.Identity(),
         )
 
-        # x: batch, patch_Size ** 2, channels, num_Patches
+        # x: batch, channels, patch_Size ** 2, num_Patches
+        self.bn2 = nn.BatchNorm2d(self.embed_dims)
         self.mix_patch = nn.Sequential(
-            CustomBatchNorm(self.num_patches),
             nn.Linear(self.num_patches, int(self.num_patches * self.expansion)),
             nn.ReLU6(),
             nn.Linear(int(self.num_patches * self.expansion), self.num_patches),
             nn.Dropout(drop_n) if drop_n > 0. else nn.Identity(),
         )
 
-        # x: batch, num_Patches, channels, patch_Size ** 2
+        # x: batch, channels, num_Patches, patch_Size ** 2
+        self.bn3 = nn.BatchNorm2d(self.embed_dims)
         self.mix_token = nn.Sequential(
-            CustomBatchNorm(self.tokens),
             nn.Linear(self.tokens, int(self.tokens * self.expansion)),
             nn.ReLU6(),
             nn.Linear(int(self.tokens * self.expansion), self.tokens),
             nn.Dropout(drop_n) if drop_n > 0. else nn.Identity(),
         )
-
-        self.bn1 = nn.BatchNorm2d(self.embed_dims)
-        self.bn2 = nn.BatchNorm2d(self.embed_dims)
-        self.bn3 = nn.BatchNorm2d(self.embed_dims)
-
-    def apply_bn(self, x, bn_func):
-        x_reshaped = x.transpose(1, 2)
-        x_normalized = bn_func(x_reshaped)
-        x_out = x_normalized.transpose(1, 2)
-
-        return x_out
 
 
     def patchify_batch(self, tensor):
@@ -193,24 +153,23 @@ class MLPMixerLayer(nn.Module):
 
         return final_tensor
 
-
     def forward(self, x):
         x = self.patchify_batch(x)
         # x: batch, num_Patches, channels, patch_Size * patch_Size
 
-        x = self.apply_bn(x, self.bn1)
+        x = self.bn1(x)
         mix_channel = x.transpose(2, 3)
         mix_channel = self.mix_channel(mix_channel)
         mix_channel = mix_channel.transpose(2, 3)
         x = x + mix_channel
 
-        x = self.apply_bn(x, self.bn2)
-        mix_patch = x.transpose(1, 3)
+        x = self.bn2(x)
+        mix_patch = x.transpose(1, 3).transpose(2, 3)
         mix_patch = self.mix_patch(mix_patch)
-        mix_patch = mix_patch.transpose(1, 3)
+        mix_patch = mix_patch.transpose(2, 3).transpose(1, 3)
         x = x + mix_patch
 
-        x = self.apply_bn(x, self.bn3)
+        x = self.bn3(x)
         mix_token = self.mix_token(x)
         x = x + mix_token
 

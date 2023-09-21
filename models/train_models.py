@@ -122,7 +122,7 @@ if __name__ == "__main__":
     LEARNING_RATE = 0.001
     LEARNING_RATE_END = 0.00001
     BATCH_SIZE = 16
-    NAME = "MixerNano04"
+    NAME = "MixerNano05"
 
     # log_format = '%(asctime)s - %(message)s'
     # logging.basicConfig(filename=os.path.join("../logs/", f"{NAME}.log"), level=logging.INFO, format=log_format)
@@ -151,7 +151,7 @@ if __name__ == "__main__":
         chw=(10, 64, 64),
         output_dim=1,
         drop_n=0.0,
-        drop_p=0.0,
+        drop_p=0.1,
     )
     # model = torch.compile(model)
 
